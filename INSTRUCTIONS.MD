@@ -25,6 +25,14 @@ Add to your Cursor MCP configuration (usually in `~/.cursor/mcp_servers.json`):
     }
   }
 }
+## OR
+{
+    "mcpServers": {
+        "SecurePromptValidator": {
+            "url": "http://localhost:8000/mcp/"
+        }
+    }
+}  
 ```
 
 ## Usage

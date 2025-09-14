@@ -43,8 +43,9 @@ class PromptSecurityValidator:
         
         # Prompt injection patterns
         self.injection_patterns = [
-            r"ignore\s+(?:previous|all|above)\s+instructions",
-            r"forget\s+(?:everything|all)\s+(?:above|before)",
+            r"ignore\s+(?:all\s+)?(?:previous|above|all)\s+instructions",
+            r"forget\s+(?:(?:everything|all)\s+)?(?:above|before|previous)",
+            r"disregard\s+(?:all\s+)?(?:previous|above|prior)\s+(?:instructions|commands|prompts)",
             r"act\s+as\s+(?:if|though)\s+you\s+are",
             r"pretend\s+(?:to\s+be|you\s+are)",
             r"simulate\s+(?:being|a)",
@@ -57,7 +58,7 @@ class PromptSecurityValidator:
         
         # Sensitive data patterns
         self.sensitive_patterns = {
-            'api_key': r'(?i)api[_-]?key\s*[:=]\s*["\']?([a-zA-Z0-9_-]{20,})["\']?',
+            'api_key': r'(?i)api[_-]?key\s*[:=]\s*["\']?([a-zA-Z0-9_-]{10,})["\']?',
             'password': r'(?i)password\s*[:=]\s*["\']?([^\s"\']{8,})["\']?',
             'token': r'(?i)(?:bearer\s+)?token\s*[:=]\s*["\']?([a-zA-Z0-9._-]{20,})["\']?',
             'secret': r'(?i)secret\s*[:=]\s*["\']?([a-zA-Z0-9_-]{16,})["\']?',
@@ -98,7 +99,7 @@ class PromptSecurityValidator:
         
         # Check for prompt injection
         injection_score = self._check_injection_patterns(prompt)
-        if injection_score > 0.5:
+        if injection_score > 0.0:
             warnings.append("Potential prompt injection detected")
             if self.security_level == SecurityLevel.HIGH:
                 blocked_patterns.append("prompt_injection")
