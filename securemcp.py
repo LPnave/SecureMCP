@@ -56,15 +56,98 @@ class PromptSecurityValidator:
             r"repeat\s+(?:after\s+me|the\s+following)",
         ]
         
-        # Sensitive data patterns
+        # Sensitive data patterns - Enhanced to catch various formats and contexts
         self.sensitive_patterns = {
-            'api_key': r'(?i)api[_-]?key\s*[:=]\s*["\']?([a-zA-Z0-9_-]{10,})["\']?',
-            'password': r'(?i)password\s*[:=]\s*["\']?([^\s"\']{8,})["\']?',
-            'token': r'(?i)(?:bearer\s+)?token\s*[:=]\s*["\']?([a-zA-Z0-9._-]{20,})["\']?',
-            'secret': r'(?i)secret\s*[:=]\s*["\']?([a-zA-Z0-9_-]{16,})["\']?',
-            'private_key': r'-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----',
-            'email': r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
-            'credit_card': r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3[0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b'
+            # API Keys - Multiple formats and contexts
+            'api_key': [
+                r'(?i)(?:api[_-]?key|apikey)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{8,})["\']?',  # api_key: value
+                r'(?i)(?:my\s+)?api[_-]?key\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-]{8,})["\']?',  # my api key is value
+                r'(?i)["\']?([a-zA-Z0-9_+\-]{8,})["\']?\s+(?:is\s+)?(?:the\s+)?api[_-]?key',  # value is the api key
+                r'(?i)(?:use\s+)?["\']?([a-zA-Z0-9_+\-]{8,})["\']?\s+(?:to\s+)?(?:connect|access)',  # use value to connect
+                r'(?i)(?:connect|access)\s+(?:to\s+)?(?:the\s+)?(?:endpoint|api|gateway)\s+(?:with\s+)?["\']?([a-zA-Z0-9_+\-]{8,})["\']?',  # connect with value
+                r'(?i)(?:i\s+have\s+an?\s+)?api[_-]?key\s+([a-zA-Z0-9_+\-]{8,})',  # I have an api key HADES_123123+ADW
+                r'(?i)([a-zA-Z0-9_+\-]{8,})\s+(?:is\s+)?(?:the\s+)?api[_-]?key',  # HADES_123123+ADW is the api key
+                r'(?i)(?:my\s+)?api[_-]?key\s+(?:to\s+)?(?:connect\s+to\s+)?(?:the\s+)?(?:sms\s+)?gateway\s+(?:is\s+)?([a-zA-Z0-9_+\-]{8,})',  # my API key to connect to the sms gateway is HADES234JK
+                r'(?i)([A-Z0-9_+\-]{8,})\s+(?:is\s+)?(?:the\s+)?api[_-]?key\s+(?:to\s+)?(?:the\s+)?(?:sms\s+)?gateway',  # HADES_123123+ADW is the api key to the sms gateway
+                # Simple patterns for common cases
+                r'(?i)api\s*[_-]?\s*key\s+([A-Z0-9_+\-]{8,})',  # api key HADES_123123+ADW (with flexible spacing)
+                r'(?i)([A-Z0-9_+\-]{8,})\s+is\s+(?:the\s+)?api\s*[_-]?\s*key',  # HADES_123123+ADW is the api key
+                r'(?i)([A-Z0-9_+\-]{8,})\s+is\s+(?:the\s+)?api\s*[_-]?\s*key\s+to\s+(?:the\s+)?(?:sms\s+)?gateway',  # HADES_123123+ADW is the api key to the sms gateway
+            ],
+            
+            # Passwords - Various contexts
+            'password': [
+                r'(?i)password\s*[:=]\s*["\']?([^\s"\']{6,})["\']?',  # password: value
+                r'(?i)(?:my\s+)?password\s+(?:is\s+)?["\']?([^\s"\']{6,})["\']?',  # my password is value
+                r'(?i)["\']?([^\s"\']{6,})["\']?\s+(?:is\s+)?(?:the\s+)?password',  # value is the password
+                r'(?i)(?:login|authenticate)\s+(?:with\s+)?(?:password\s+)?["\']?([^\s"\']{6,})["\']?',  # login with value
+                r'(?i)(?:database|db)\s+password\s+(?:is\s+)?["\']?([^\s"\']{6,})["\']?',  # database password is value
+            ],
+            
+            # Tokens - Bearer tokens, access tokens, etc.
+            'token': [
+                r'(?i)(?:bearer\s+)?token\s*[:=]\s*["\']?([a-zA-Z0-9._+\-]{15,})["\']?',  # token: value
+                r'(?i)(?:my\s+)?(?:access\s+)?token\s+(?:is\s+)?["\']?([a-zA-Z0-9._+\-]{15,})["\']?',  # my token is value
+                r'(?i)["\']?([a-zA-Z0-9._+\-]{15,})["\']?\s+(?:is\s+)?(?:the\s+)?(?:access\s+)?token',  # value is the token
+                r'(?i)(?:authorization|auth)\s+(?:header\s+)?["\']?([a-zA-Z0-9._+\-]{15,})["\']?',  # auth header value
+            ],
+            
+            # Secrets - API secrets, client secrets, etc.
+            'secret': [
+                r'(?i)(?:api\s+)?secret\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{12,})["\']?',  # secret: value
+                r'(?i)(?:my\s+)?(?:api\s+)?secret\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-]{12,})["\']?',  # my secret is value
+                r'(?i)["\']?([a-zA-Z0-9_+\-]{12,})["\']?\s+(?:is\s+)?(?:the\s+)?(?:api\s+)?secret',  # value is the secret
+                r'(?i)(?:client\s+)?secret\s+(?:for\s+)?(?:the\s+)?(?:api|service)\s+["\']?([a-zA-Z0-9_+\-]{12,})["\']?',  # secret for api value
+            ],
+            
+            # Private Keys
+            'private_key': [
+                r'-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----',
+                r'(?i)(?:private\s+)?key\s*[:=]\s*["\']?([a-zA-Z0-9_+\-=\/]{50,})["\']?',  # private key: value
+                r'(?i)(?:my\s+)?(?:private\s+)?key\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-=\/]{50,})["\']?',  # my key is value
+            ],
+            
+            # Database credentials
+            'db_credentials': [
+                r'(?i)(?:database|db)\s+(?:password|pass)\s*[:=]\s*["\']?([^\s"\']{6,})["\']?',  # db password: value
+                r'(?i)(?:db|database)\s+(?:user|username)\s*[:=]\s*["\']?([a-zA-Z0-9_]{3,})["\']?',  # db user: value
+                r'(?i)(?:connection\s+)?string\s*[:=]\s*["\']?([a-zA-Z0-9_+\-=\/\.:]{20,})["\']?',  # connection string
+            ],
+            
+            # Email addresses
+            'email': [
+                r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',  # Standard email format
+                r'(?i)(?:email|e-mail)\s*[:=]\s*["\']?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})["\']?',  # email: value
+                r'(?i)(?:my\s+)?email\s+(?:is\s+)?["\']?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})["\']?',  # my email is value
+            ],
+            
+            # Credit card numbers
+            'credit_card': [
+                r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3[0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b',  # Standard CC format
+                r'(?i)(?:credit\s+card|card\s+number)\s*[:=]\s*["\']?([0-9\s\-]{13,19})["\']?',  # credit card: value
+                r'(?i)(?:my\s+)?(?:credit\s+)?card\s+(?:number\s+)?(?:is\s+)?["\']?([0-9\s\-]{13,19})["\']?',  # my card is value
+            ],
+            
+            # SSH Keys
+            'ssh_key': [
+                r'(?i)(?:ssh|rsa)\s+(?:key|private\s+key)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-=\/]{50,})["\']?',  # ssh key: value
+                r'(?i)(?:my\s+)?(?:ssh|rsa)\s+(?:key|private\s+key)\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-=\/]{50,})["\']?',  # my ssh key is value
+                r'ssh-rsa\s+[a-zA-Z0-9_+\-=\/]{50,}',  # ssh-rsa format
+            ],
+            
+            # JWT Tokens
+            'jwt_token': [
+                r'(?i)(?:jwt|json\s+web\s+token)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-=\/\.]{50,})["\']?',  # jwt: value
+                r'(?i)(?:my\s+)?(?:jwt|json\s+web\s+token)\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-=\/\.]{50,})["\']?',  # my jwt is value
+                r'["\']?([a-zA-Z0-9_+\-=\/\.]{50,})["\']?\s+(?:is\s+)?(?:the\s+)?(?:jwt|json\s+web\s+token)',  # value is the jwt
+            ],
+            
+            # AWS/GCP/Azure credentials
+            'cloud_credentials': [
+                r'(?i)(?:aws|amazon)\s+(?:access\s+)?(?:key|secret)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{15,})["\']?',  # aws key: value
+                r'(?i)(?:gcp|google)\s+(?:service\s+)?(?:account\s+)?(?:key|secret)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{15,})["\']?',  # gcp key: value
+                r'(?i)(?:azure)\s+(?:client\s+)?(?:secret|key)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{15,})["\']?',  # azure secret: value
+            ]
         }
         
         # Malicious code patterns
@@ -168,27 +251,36 @@ class PromptSecurityValidator:
         modified = prompt
         found_patterns = []
         
-        for pattern_name, pattern in self.sensitive_patterns.items():
-            matches = re.finditer(pattern, modified)
-            for match in matches:
-                if pattern_name == 'email':
-                    # Partially mask email
-                    email = match.group(0)
-                    username, domain = email.split('@')
-                    masked_email = f"{username[:2]}***@{domain}"
-                    modified = modified.replace(email, masked_email)
-                elif pattern_name in ['api_key', 'token', 'secret', 'password']:
-                    # Replace with placeholder
-                    modified = re.sub(pattern, f'[{pattern_name.upper()}_REMOVED]', modified)
-                elif pattern_name == 'private_key':
-                    modified = re.sub(pattern, '[PRIVATE_KEY_REMOVED]', modified)
-                elif pattern_name == 'credit_card':
-                    # Mask credit card number
-                    cc_num = match.group(0)
-                    masked = f"{cc_num[:4]}****{cc_num[-4:]}"
-                    modified = modified.replace(cc_num, masked)
-                
-                found_patterns.append(pattern_name)
+        for pattern_name, patterns in self.sensitive_patterns.items():
+            # Handle both single patterns and lists of patterns
+            pattern_list = patterns if isinstance(patterns, list) else [patterns]
+            
+            for pattern in pattern_list:
+                matches = re.finditer(pattern, modified, re.IGNORECASE)
+                for match in matches:
+                    if pattern_name == 'email':
+                        # Partially mask email
+                        email = match.group(0)
+                        if '@' in email:
+                            username, domain = email.split('@', 1)
+                            masked_email = f"{username[:2]}***@{domain}"
+                            modified = modified.replace(email, masked_email)
+                    elif pattern_name in ['api_key', 'token', 'secret', 'password', 'db_credentials', 'ssh_key', 'jwt_token', 'cloud_credentials']:
+                        # Replace with placeholder
+                        modified = re.sub(pattern, f'[{pattern_name.upper()}_REMOVED]', modified, flags=re.IGNORECASE)
+                    elif pattern_name == 'private_key':
+                        modified = re.sub(pattern, '[PRIVATE_KEY_REMOVED]', modified, flags=re.IGNORECASE)
+                    elif pattern_name == 'credit_card':
+                        # Mask credit card number
+                        cc_num = match.group(0)
+                        # Remove spaces and dashes for masking
+                        clean_cc = re.sub(r'[\s\-]', '', cc_num)
+                        if len(clean_cc) >= 8:
+                            masked = f"{clean_cc[:4]}****{clean_cc[-4:]}"
+                            modified = modified.replace(cc_num, masked)
+                    
+                    if pattern_name not in found_patterns:
+                        found_patterns.append(pattern_name)
         
         return modified, found_patterns
     
