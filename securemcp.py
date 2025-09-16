@@ -60,93 +60,93 @@ class PromptSecurityValidator:
         self.sensitive_patterns = {
             # API Keys - Multiple formats and contexts
             'api_key': [
-                r'(?i)(?:api[_-]?key|apikey)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{8,})["\']?',  # api_key: value
-                r'(?i)(?:my\s+)?api[_-]?key\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-]{8,})["\']?',  # my api key is value
-                r'(?i)["\']?([a-zA-Z0-9_+\-]{8,})["\']?\s+(?:is\s+)?(?:the\s+)?api[_-]?key',  # value is the api key
-                r'(?i)(?:use\s+)?["\']?([a-zA-Z0-9_+\-]{8,})["\']?\s+(?:to\s+)?(?:connect|access)',  # use value to connect
-                r'(?i)(?:connect|access)\s+(?:to\s+)?(?:the\s+)?(?:endpoint|api|gateway)\s+(?:with\s+)?["\']?([a-zA-Z0-9_+\-]{8,})["\']?',  # connect with value
-                r'(?i)(?:i\s+have\s+an?\s+)?api[_-]?key\s+([a-zA-Z0-9_+\-]{8,})',  # I have an api key HADES_123123+ADW
-                r'(?i)([a-zA-Z0-9_+\-]{8,})\s+(?:is\s+)?(?:the\s+)?api[_-]?key',  # HADES_123123+ADW is the api key
-                r'(?i)(?:my\s+)?api[_-]?key\s+(?:to\s+)?(?:connect\s+to\s+)?(?:the\s+)?(?:sms\s+)?gateway\s+(?:is\s+)?([a-zA-Z0-9_+\-]{8,})',  # my API key to connect to the sms gateway is HADES234JK
-                r'(?i)([A-Z0-9_+\-]{8,})\s+(?:is\s+)?(?:the\s+)?api[_-]?key\s+(?:to\s+)?(?:the\s+)?(?:sms\s+)?gateway',  # HADES_123123+ADW is the api key to the sms gateway
+                r'(?i)(?:api[_-]?key|apikey)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{8,})["\']?', 
+                r'(?i)(?:my\s+)?api[_-]?key\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-]{8,})["\']?',  
+                r'(?i)["\']?([a-zA-Z0-9_+\-]{8,})["\']?\s+(?:is\s+)?(?:the\s+)?api[_-]?key',  
+                r'(?i)(?:use\s+)?["\']?([a-zA-Z0-9_+\-]{8,})["\']?\s+(?:to\s+)?(?:connect|access)',
+                r'(?i)(?:connect|access)\s+(?:to\s+)?(?:the\s+)?(?:endpoint|api|gateway)\s+(?:with\s+)?["\']?([a-zA-Z0-9_+\-]{8,})["\']?', 
+                r'(?i)(?:i\s+have\s+an?\s+)?api[_-]?key\s+([a-zA-Z0-9_+\-]{8,})',
+                r'(?i)([a-zA-Z0-9_+\-]{8,})\s+(?:is\s+)?(?:the\s+)?api[_-]?key', 
+                r'(?i)(?:my\s+)?api[_-]?key\s+(?:to\s+)?(?:connect\s+to\s+)?(?:the\s+)?(?:sms\s+)?gateway\s+(?:is\s+)?([a-zA-Z0-9_+\-]{8,})',
+                r'(?i)([A-Z0-9_+\-]{8,})\s+(?:is\s+)?(?:the\s+)?api[_-]?key\s+(?:to\s+)?(?:the\s+)?(?:sms\s+)?gateway', 
                 # Simple patterns for common cases
-                r'(?i)api\s*[_-]?\s*key\s+([A-Z0-9_+\-]{8,})',  # api key HADES_123123+ADW (with flexible spacing)
-                r'(?i)([A-Z0-9_+\-]{8,})\s+is\s+(?:the\s+)?api\s*[_-]?\s*key',  # HADES_123123+ADW is the api key
-                r'(?i)([A-Z0-9_+\-]{8,})\s+is\s+(?:the\s+)?api\s*[_-]?\s*key\s+to\s+(?:the\s+)?(?:sms\s+)?gateway',  # HADES_123123+ADW is the api key to the sms gateway
+                r'(?i)api\s*[_-]?\s*key\s+([A-Z0-9_+\-]{8,})', 
+                r'(?i)([A-Z0-9_+\-]{8,})\s+is\s+(?:the\s+)?api\s*[_-]?\s*key', 
+                r'(?i)([A-Z0-9_+\-]{8,})\s+is\s+(?:the\s+)?api\s*[_-]?\s*key\s+to\s+(?:the\s+)?(?:sms\s+)?gateway', 
             ],
             
             # Passwords - Various contexts
             'password': [
-                r'(?i)password\s*[:=]\s*["\']?([^\s"\']{6,})["\']?',  # password: value
-                r'(?i)(?:my\s+)?password\s+(?:is\s+)?["\']?([^\s"\']{6,})["\']?',  # my password is value
-                r'(?i)["\']?([^\s"\']{6,})["\']?\s+(?:is\s+)?(?:the\s+)?password',  # value is the password
-                r'(?i)(?:login|authenticate)\s+(?:with\s+)?(?:password\s+)?["\']?([^\s"\']{6,})["\']?',  # login with value
-                r'(?i)(?:database|db)\s+password\s+(?:is\s+)?["\']?([^\s"\']{6,})["\']?',  # database password is value
+                r'(?i)password\s*[:=]\s*["\']?([^\s"\']{6,})["\']?',  
+                r'(?i)(?:my\s+)?password\s+(?:is\s+)?["\']?([^\s"\']{6,})["\']?',  
+                r'(?i)["\']?([^\s"\']{6,})["\']?\s+(?:is\s+)?(?:the\s+)?password', 
+                r'(?i)(?:login|authenticate)\s+(?:with\s+)?(?:password\s+)?["\']?([^\s"\']{6,})["\']?',  
+                r'(?i)(?:database|db)\s+password\s+(?:is\s+)?["\']?([^\s"\']{6,})["\']?', 
             ],
             
             # Tokens - Bearer tokens, access tokens, etc.
             'token': [
-                r'(?i)(?:bearer\s+)?token\s*[:=]\s*["\']?([a-zA-Z0-9._+\-]{15,})["\']?',  # token: value
-                r'(?i)(?:my\s+)?(?:access\s+)?token\s+(?:is\s+)?["\']?([a-zA-Z0-9._+\-]{15,})["\']?',  # my token is value
-                r'(?i)["\']?([a-zA-Z0-9._+\-]{15,})["\']?\s+(?:is\s+)?(?:the\s+)?(?:access\s+)?token',  # value is the token
-                r'(?i)(?:authorization|auth)\s+(?:header\s+)?["\']?([a-zA-Z0-9._+\-]{15,})["\']?',  # auth header value
+                r'(?i)(?:bearer\s+)?token\s*[:=]\s*["\']?([a-zA-Z0-9._+\-]{15,})["\']?', 
+                r'(?i)(?:my\s+)?(?:access\s+)?token\s+(?:is\s+)?["\']?([a-zA-Z0-9._+\-]{15,})["\']?',  
+                r'(?i)["\']?([a-zA-Z0-9._+\-]{15,})["\']?\s+(?:is\s+)?(?:the\s+)?(?:access\s+)?token', 
+                r'(?i)(?:authorization|auth)\s+(?:header\s+)?["\']?([a-zA-Z0-9._+\-]{15,})["\']?', 
             ],
             
             # Secrets - API secrets, client secrets, etc.
             'secret': [
-                r'(?i)(?:api\s+)?secret\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{12,})["\']?',  # secret: value
-                r'(?i)(?:my\s+)?(?:api\s+)?secret\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-]{12,})["\']?',  # my secret is value
-                r'(?i)["\']?([a-zA-Z0-9_+\-]{12,})["\']?\s+(?:is\s+)?(?:the\s+)?(?:api\s+)?secret',  # value is the secret
-                r'(?i)(?:client\s+)?secret\s+(?:for\s+)?(?:the\s+)?(?:api|service)\s+["\']?([a-zA-Z0-9_+\-]{12,})["\']?',  # secret for api value
+                r'(?i)(?:api\s+)?secret\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{12,})["\']?',  
+                r'(?i)(?:my\s+)?(?:api\s+)?secret\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-]{12,})["\']?',  
+                r'(?i)["\']?([a-zA-Z0-9_+\-]{12,})["\']?\s+(?:is\s+)?(?:the\s+)?(?:api\s+)?secret',  
+                r'(?i)(?:client\s+)?secret\s+(?:for\s+)?(?:the\s+)?(?:api|service)\s+["\']?([a-zA-Z0-9_+\-]{12,})["\']?',  
             ],
             
             # Private Keys
             'private_key': [
                 r'-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----',
-                r'(?i)(?:private\s+)?key\s*[:=]\s*["\']?([a-zA-Z0-9_+\-=\/]{50,})["\']?',  # private key: value
-                r'(?i)(?:my\s+)?(?:private\s+)?key\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-=\/]{50,})["\']?',  # my key is value
+                r'(?i)(?:private\s+)?key\s*[:=]\s*["\']?([a-zA-Z0-9_+\-=\/]{50,})["\']?',  
+                r'(?i)(?:my\s+)?(?:private\s+)?key\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-=\/]{50,})["\']?',  
             ],
             
             # Database credentials
             'db_credentials': [
-                r'(?i)(?:database|db)\s+(?:password|pass)\s*[:=]\s*["\']?([^\s"\']{6,})["\']?',  # db password: value
-                r'(?i)(?:db|database)\s+(?:user|username)\s*[:=]\s*["\']?([a-zA-Z0-9_]{3,})["\']?',  # db user: value
-                r'(?i)(?:connection\s+)?string\s*[:=]\s*["\']?([a-zA-Z0-9_+\-=\/\.:]{20,})["\']?',  # connection string
+                r'(?i)(?:database|db)\s+(?:password|pass)\s*[:=]\s*["\']?([^\s"\']{6,})["\']?',  
+                r'(?i)(?:db|database)\s+(?:user|username)\s*[:=]\s*["\']?([a-zA-Z0-9_]{3,})["\']?', 
+                r'(?i)(?:connection\s+)?string\s*[:=]\s*["\']?([a-zA-Z0-9_+\-=\/\.:]{20,})["\']?', 
             ],
             
             # Email addresses
             'email': [
-                r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',  # Standard email format
-                r'(?i)(?:email|e-mail)\s*[:=]\s*["\']?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})["\']?',  # email: value
-                r'(?i)(?:my\s+)?email\s+(?:is\s+)?["\']?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})["\']?',  # my email is value
+                r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',  
+                r'(?i)(?:email|e-mail)\s*[:=]\s*["\']?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})["\']?', 
+                r'(?i)(?:my\s+)?email\s+(?:is\s+)?["\']?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})["\']?', 
             ],
             
             # Credit card numbers
             'credit_card': [
-                r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3[0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b',  # Standard CC format
-                r'(?i)(?:credit\s+card|card\s+number)\s*[:=]\s*["\']?([0-9\s\-]{13,19})["\']?',  # credit card: value
-                r'(?i)(?:my\s+)?(?:credit\s+)?card\s+(?:number\s+)?(?:is\s+)?["\']?([0-9\s\-]{13,19})["\']?',  # my card is value
+                r'\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3[0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b',  
+                r'(?i)(?:credit\s+card|card\s+number)\s*[:=]\s*["\']?([0-9\s\-]{13,19})["\']?',
+                r'(?i)(?:my\s+)?(?:credit\s+)?card\s+(?:number\s+)?(?:is\s+)?["\']?([0-9\s\-]{13,19})["\']?',
             ],
             
             # SSH Keys
             'ssh_key': [
-                r'(?i)(?:ssh|rsa)\s+(?:key|private\s+key)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-=\/]{50,})["\']?',  # ssh key: value
-                r'(?i)(?:my\s+)?(?:ssh|rsa)\s+(?:key|private\s+key)\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-=\/]{50,})["\']?',  # my ssh key is value
-                r'ssh-rsa\s+[a-zA-Z0-9_+\-=\/]{50,}',  # ssh-rsa format
+                r'(?i)(?:ssh|rsa)\s+(?:key|private\s+key)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-=\/]{50,})["\']?',  
+                r'(?i)(?:my\s+)?(?:ssh|rsa)\s+(?:key|private\s+key)\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-=\/]{50,})["\']?', 
+                r'ssh-rsa\s+[a-zA-Z0-9_+\-=\/]{50,}',
             ],
             
             # JWT Tokens
             'jwt_token': [
-                r'(?i)(?:jwt|json\s+web\s+token)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-=\/\.]{50,})["\']?',  # jwt: value
-                r'(?i)(?:my\s+)?(?:jwt|json\s+web\s+token)\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-=\/\.]{50,})["\']?',  # my jwt is value
-                r'["\']?([a-zA-Z0-9_+\-=\/\.]{50,})["\']?\s+(?:is\s+)?(?:the\s+)?(?:jwt|json\s+web\s+token)',  # value is the jwt
+                r'(?i)(?:jwt|json\s+web\s+token)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-=\/\.]{50,})["\']?', 
+                r'(?i)(?:my\s+)?(?:jwt|json\s+web\s+token)\s+(?:is\s+)?["\']?([a-zA-Z0-9_+\-=\/\.]{50,})["\']?',
+                r'["\']?([a-zA-Z0-9_+\-=\/\.]{50,})["\']?\s+(?:is\s+)?(?:the\s+)?(?:jwt|json\s+web\s+token)',  
             ],
             
             # AWS/GCP/Azure credentials
             'cloud_credentials': [
-                r'(?i)(?:aws|amazon)\s+(?:access\s+)?(?:key|secret)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{15,})["\']?',  # aws key: value
-                r'(?i)(?:gcp|google)\s+(?:service\s+)?(?:account\s+)?(?:key|secret)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{15,})["\']?',  # gcp key: value
-                r'(?i)(?:azure)\s+(?:client\s+)?(?:secret|key)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{15,})["\']?',  # azure secret: value
+                r'(?i)(?:aws|amazon)\s+(?:access\s+)?(?:key|secret)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{15,})["\']?',  
+                r'(?i)(?:gcp|google)\s+(?:service\s+)?(?:account\s+)?(?:key|secret)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{15,})["\']?', 
+                r'(?i)(?:azure)\s+(?:client\s+)?(?:secret|key)\s*[:=]\s*["\']?([a-zA-Z0-9_+\-]{15,})["\']?',
             ]
         }
         
