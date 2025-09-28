@@ -7,7 +7,7 @@ A Model Context Protocol server that uses spaCy for advanced prompt security val
 import asyncio
 import json
 import logging
-import re
+# import re
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
@@ -176,8 +176,12 @@ class EnhancedPromptSecurityValidator:
             'urgency_indicators': ['urgent', 'critical', 'important', 'emergency', 'asap', 'immediately'],
         }
     
-    async def validate_prompt(self, prompt: str, context: Optional[Dict] = None) -> SecurityResult:
+    async def validate_prompt(self, prompt: str, context: Optional[Dict] = None, ctx=None) -> SecurityResult:
         """Pure NLP-based validation and sanitization"""
+        if ctx:
+            await ctx.debug("Starting NLP-based prompt validation")
+            await ctx.info(f"Processing prompt of length {len(prompt)} characters")
+        
         warnings = []
         blocked_patterns = []
         modified_prompt = prompt
@@ -185,12 +189,19 @@ class EnhancedPromptSecurityValidator:
         nlp_analysis = {}
         
         # Process with spaCy
+        if ctx:
+            await ctx.debug("Processing prompt with spaCy NLP pipeline")
         doc = self.nlp(prompt)
         
         # Comprehensive NLP pattern detection
+        if ctx:
+            await ctx.debug("Running spaCy Matcher for pattern detection")
         matches = self.matcher(doc)
         nlp_analysis['total_matches'] = len(matches)
         nlp_analysis['matches'] = []
+        
+        if ctx:
+            await ctx.info(f"Found {len(matches)} pattern matches")
         
         injection_matches = []
         sensitive_matches = []
@@ -198,6 +209,8 @@ class EnhancedPromptSecurityValidator:
         jailbreak_matches = []
         
         # Categorize matches
+        if ctx:
+            await ctx.debug("Categorizing matches by security type")
         for match_id, start, end in matches:
             match_label = self.nlp.vocab.strings[match_id]
             match_text = doc[start:end].text
@@ -219,10 +232,15 @@ class EnhancedPromptSecurityValidator:
                 jailbreak_matches.append(match_info)
         
         # Calculate scores based on matches and semantic analysis
+        if ctx:
+            await ctx.debug("Calculating security scores for each threat category")
         injection_score = self._calculate_injection_score(doc, injection_matches)
         sensitive_score = self._calculate_sensitive_score(doc, sensitive_matches)
         malicious_score = self._calculate_malicious_score(doc, malicious_matches)
         jailbreak_score = self._calculate_jailbreak_score(doc, jailbreak_matches)
+        
+        if ctx:
+            await ctx.info(f"Security scores - Injection: {injection_score:.2f}, Sensitive: {sensitive_score:.2f}, Malicious: {malicious_score:.2f}, Jailbreak: {jailbreak_score:.2f}")
         
         nlp_analysis.update({
             'injection_score': injection_score,
@@ -233,12 +251,17 @@ class EnhancedPromptSecurityValidator:
         })
         
         # Apply sanitization and determine if prompt should be blocked
-        modified_prompt, sanitization_applied = self._intelligent_sanitize(doc, {
+        if ctx:
+            await ctx.debug("Applying intelligent sanitization to detected threats")
+        modified_prompt, sanitization_applied = await self._intelligent_sanitize(doc, {
             'injection_matches': injection_matches,
             'sensitive_matches': sensitive_matches,
             'malicious_matches': malicious_matches,
             'jailbreak_matches': jailbreak_matches
-        })
+        }, ctx)
+        
+        if ctx and sanitization_applied:
+            await ctx.info(f"Applied sanitization to {len(sanitization_applied)} categories of threats")
         
         # Determine safety based on security level and scores
         if injection_score > 0.3:
@@ -268,10 +291,15 @@ class EnhancedPromptSecurityValidator:
         confidence = 1.0 - max(injection_score, malicious_score, jailbreak_score)
         is_safe = len(blocked_patterns) == 0
         
+        if ctx:
+            await ctx.info(f"Final assessment - Safe: {is_safe}, Confidence: {confidence:.2f}, Blocked patterns: {len(blocked_patterns)}")
+        
         # Add sanitization info
         if sanitization_applied:
             warnings.append("Prompt has been sanitized to remove unsafe content")
             nlp_analysis['sanitization_applied'] = sanitization_applied
+            if ctx:
+                await ctx.debug("Sanitization details added to analysis results")
         
         return SecurityResult(
             is_safe=is_safe,
@@ -400,12 +428,16 @@ class EnhancedPromptSecurityValidator:
         total_score = base_score + urgency_score + role_score + hypothetical_score + authority_score
         return min(total_score, 1.0)
     
-    def _intelligent_sanitize(self, doc, matches_dict: Dict) -> Tuple[str, Dict]:
+    async def _intelligent_sanitize(self, doc, matches_dict: Dict, ctx=None) -> Tuple[str, Dict]:
         """Intelligently sanitize the prompt based on NLP analysis"""
+        if ctx:
+            await ctx.debug("Starting intelligent sanitization process")
         modified_text = doc.text
         sanitization_applied = {}
         
         # Extend sensitive matches to include credential values
+        if ctx:
+            await ctx.debug("Extending sensitive matches to include credential values")
         extended_sensitive_matches = self._extend_sensitive_matches_with_values(doc, matches_dict.get('sensitive_matches', []))
         
         # Collect all matches with extended sensitive matches
@@ -420,7 +452,12 @@ class EnhancedPromptSecurityValidator:
                     all_matches.append({**match, 'category': category})
         
         # Remove overlapping matches, keeping the longest/most specific ones
+        if ctx:
+            await ctx.debug(f"Resolving overlapping matches from {len(all_matches)} total matches")
         filtered_matches = self._resolve_overlapping_matches(all_matches)
+        
+        if ctx:
+            await ctx.info(f"Filtered to {len(filtered_matches)} non-overlapping matches")
         
         # Sort by position (reverse order to maintain character indices)
         filtered_matches.sort(key=lambda x: x['start'], reverse=True)
@@ -455,9 +492,13 @@ class EnhancedPromptSecurityValidator:
             modified_text = modified_text[:start_char] + replacement + modified_text[end_char:]
         
         # Additional standalone email detection and masking
+        if ctx:
+            await ctx.debug("Checking for standalone email addresses")
         modified_text, email_sanitization = self._sanitize_standalone_emails(modified_text)
         if email_sanitization:
             sanitization_applied.setdefault('standalone_emails_masked', []).extend(email_sanitization)
+            if ctx:
+                await ctx.info(f"Masked {len(email_sanitization)} standalone email addresses")
         
         return modified_text, sanitization_applied
     
@@ -812,31 +853,47 @@ mcp = FastMCP("Enhanced Secure Prompt Validator with NLP")
 security_validator = EnhancedPromptSecurityValidator(SecurityLevel.MEDIUM)
 
 @mcp.tool()
-async def validate_and_secure_prompt(prompt: str, context: Optional[str] = None) -> Dict:
+async def validate_and_secure_prompt(prompt: str, context: Optional[str] = None, ctx=None) -> Dict:
     """
-    Enhanced prompt validation using both regex and NLP analysis.
+    Enhanced prompt validation using NLP analysis.
     
     Args:
         prompt: The prompt to validate and secure
         context: Optional JSON string containing additional context
+        ctx: FastMCP context for logging
     
     Returns:
         Dictionary containing validation results and secured prompt
     """
     try:
+        if ctx:
+            await ctx.info("Starting prompt validation and security analysis")
+            await ctx.debug(f"Input prompt length: {len(prompt)} characters")
+        
         # Parse context if provided
         parsed_context = None
         if context:
             try:
                 parsed_context = json.loads(context)
+                if ctx:
+                    await ctx.debug("Successfully parsed context parameter")
             except json.JSONDecodeError:
                 logger.warning("Invalid JSON in context parameter")
+                if ctx:
+                    await ctx.warning("Invalid JSON in context parameter")
         
         # Validate the prompt with enhanced NLP analysis
-        result = await security_validator.validate_prompt(prompt, parsed_context)
+        result = await security_validator.validate_prompt(prompt, parsed_context, ctx)
         
         # Log the security check
         logger.info(f"Enhanced security check - Safe: {result.is_safe}, Warnings: {len(result.warnings)}")
+        
+        if ctx:
+            await ctx.info(f"Validation complete - Safe: {result.is_safe}, Confidence: {result.confidence:.2f}")
+            if result.warnings:
+                await ctx.warning(f"Generated {len(result.warnings)} security warnings")
+            if prompt != result.modified_prompt:
+                await ctx.info("Prompt was modified during sanitization")
         
         return {
             "is_safe": result.is_safe,
@@ -851,6 +908,8 @@ async def validate_and_secure_prompt(prompt: str, context: Optional[str] = None)
     
     except Exception as e:
         logger.error(f"Error validating prompt: {e}")
+        if ctx:
+            await ctx.error(f"Validation failed with error: {str(e)}")
         return {
             "is_safe": False,
             "secured_prompt": "",
@@ -863,20 +922,27 @@ async def validate_and_secure_prompt(prompt: str, context: Optional[str] = None)
         }
 
 @mcp.tool()
-async def update_security_level(level: str) -> Dict:
+async def update_security_level(level: str, ctx=None) -> Dict:
     """
     Update the security level for prompt validation.
     
     Args:
         level: Security level (low, medium, high)
+        ctx: FastMCP context for logging
     
     Returns:
         Dictionary containing the update result
     """
     try:
+        if ctx:
+            await ctx.info(f"Updating security level to: {level}")
+        
         new_level = SecurityLevel(level.lower())
         security_validator.security_level = new_level
         logger.info(f"Security level updated to: {new_level.value}")
+        
+        if ctx:
+            await ctx.info(f"Security level successfully updated to {new_level.value}")
         
         return {
             "success": True,
@@ -885,19 +951,27 @@ async def update_security_level(level: str) -> Dict:
         }
     
     except ValueError:
+        if ctx:
+            await ctx.error(f"Invalid security level: {level}")
         return {
             "success": False,
             "error": f"Invalid security level: {level}. Valid options: low, medium, high"
         }
 
 @mcp.tool()
-async def get_security_stats() -> Dict:
+async def get_security_stats(ctx=None) -> Dict:
     """
     Get statistics about the enhanced security validator configuration.
+    
+    Args:
+        ctx: FastMCP context for logging
     
     Returns:
         Dictionary containing security configuration stats
     """
+    if ctx:
+        await ctx.info("Retrieving security validator statistics")
+    
     return {
         "current_security_level": security_validator.security_level.value,
         "pattern_counts": {
@@ -923,19 +997,27 @@ async def get_security_stats() -> Dict:
     }
 
 @mcp.tool()
-async def analyze_prompt_semantics(prompt: str) -> Dict:
+async def analyze_prompt_semantics(prompt: str, ctx=None) -> Dict:
     """
     Analyze the semantic features of a prompt without security validation.
     
     Args:
         prompt: The prompt to analyze
+        ctx: FastMCP context for logging
     
     Returns:
         Dictionary containing semantic analysis results
     """
     try:
+        if ctx:
+            await ctx.info("Starting semantic analysis of prompt")
+            await ctx.debug(f"Analyzing prompt of length {len(prompt)} characters")
+        
         doc = security_validator.nlp(prompt)
         analysis = security_validator._analyze_semantic_features(doc)
+        
+        if ctx:
+            await ctx.info(f"Semantic analysis complete - {analysis['sentence_count']} sentences, {analysis['word_count']} words")
         
         return {
             "success": True,
@@ -945,6 +1027,8 @@ async def analyze_prompt_semantics(prompt: str) -> Dict:
     
     except Exception as e:
         logger.error(f"Error analyzing prompt semantics: {e}")
+        if ctx:
+            await ctx.error(f"Semantic analysis failed: {str(e)}")
         return {
             "success": False,
             "error": str(e),
