@@ -1,0 +1,18 @@
+# Requirements for Zero-Shot Secure Prompt MCP Server
+# Install with: pip install -r requirements-zeroshot.txt
+
+# Core FastMCP
+fastmcp>=2.11.0
+
+# Transformers and ML dependencies
+transformers>=4.30.0
+torch>=2.0.0
+tokenizers>=0.13.0
+
+# Optional: For better performance
+# accelerate>=0.20.0
+# bitsandbytes>=0.39.0
+
+# Development dependencies
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
