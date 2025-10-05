@@ -1,0 +1,31 @@
+# Requirements for Secure Prompt MCP Server with NLP and Authentication
+# Install with: pip install -r requirements-nlp.txt
+
+# Core FastMCP with authentication support (updated to latest version)
+fastmcp>=2.11.0
+
+# NLP dependencies
+spacy>=3.7.0
+
+# JWT and authentication
+PyJWT>=2.8.0
+cryptography>=41.0.0
+
+# HTTP client for testing
+requests>=2.31.0
+
+# Environment configuration
+python-dotenv>=1.0.0
+
+# Python standard library modules (no installation needed)
+# asyncio - built-in
+# typing - built-in (Python 3.5+)
+# dataclasses - built-in (Python 3.7+)
+# enum - built-in (enum34 only needed for Python < 3.4)
+
+# Optional: Redis for production rate limiting
+# redis>=5.0.0
+
+# Development dependencies
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
