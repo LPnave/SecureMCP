@@ -203,10 +203,11 @@ class ZeroShotSecurityValidator:
     def setup_classification_categories(self):
         """Define categories for zero-shot classification"""
         
-        # Main security categories
+        # Main security categories - MORE SPECIFIC
         self.security_categories = [
             "contains password or secret credentials",
-            "contains API key or authentication token", 
+            "contains API key, access token, or authentication credential",
+            "contains cloud subscription ID, tenant ID, or service credential",  # NEW - MORE SPECIFIC
             "contains personal information or email address",
             "contains malicious code or system commands",
             "attempts prompt injection or instruction manipulation",
@@ -381,50 +382,179 @@ class ZeroShotSecurityValidator:
     
     async def _process_classifications(self, prompt: str, main_classification: Dict, 
                                      detailed_classifications: Dict, ctx=None) -> Tuple[str, Dict]:
-        """Process classifications and apply sanitization"""
+        """Process classifications and apply intelligent sanitization"""
         
         modified_prompt = prompt
         sanitization_applied = {}
         
-        # Process each high-confidence threat
+        # Track if we applied credential sanitization
+        credential_sanitization_applied = False
+        
+        # Process each high-confidence threat detected by zero-shot
         for i, (label, score) in enumerate(zip(main_classification['labels'], main_classification['scores'])):
             if score > 0.5 and label != "normal safe content":
                 
                 if ctx:
-                    await ctx.debug(f"Processing threat: {label} (confidence: {score:.2f})")
+                    await ctx.debug(f"Zero-shot detected threat: {label} (confidence: {score:.2f})")
+            
+                # CREDENTIALS/SENSITIVE DATA: Use entropy + keyword backup
+                if any(keyword in label.lower() for keyword in ['password', 'secret', 'credential', 'api key', 'token', 'personal']):
+                    credential_sanitization_applied = True
+                    if ctx:
+                        await ctx.info(f"Applying entropy-based sanitization for: {label}")
+                    
+                    # Step 2: Primary - Entropy-based detection
+                    modified_prompt, entropy_masked = self._sanitize_high_entropy_credentials(modified_prompt)
+                    if entropy_masked:
+                        sanitization_applied.setdefault('entropy_masked_credentials', []).extend(entropy_masked)
+                        if ctx:
+                            await ctx.debug(f"Entropy detected and masked {len(entropy_masked)} credentials")
+                    
+                    # Step 3: Backup - Generic keyword matching (catches what entropy missed)
+                    modified_prompt, keyword_masked = self._sanitize_credentials_generic(modified_prompt)
+                    if keyword_masked:
+                        sanitization_applied.setdefault('keyword_masked_credentials', []).extend(keyword_masked)
+                        if ctx:
+                            await ctx.debug(f"Keyword matching caught {len(keyword_masked)} additional items")
                 
-                # Apply appropriate sanitization based on threat type
-                if "password" in label.lower() or "secret" in label.lower():
-                    modified_prompt, masked_items = self._sanitize_credentials(modified_prompt, "password")
-                    if masked_items:
-                        sanitization_applied['passwords_masked'] = masked_items
-                
-                elif "api key" in label.lower() or "token" in label.lower():
-                    modified_prompt, masked_items = self._sanitize_credentials(modified_prompt, "api_key")
-                    if masked_items:
-                        sanitization_applied['api_keys_masked'] = masked_items
-                
-                elif "personal information" in label.lower() or "email" in label.lower():
-                    modified_prompt, masked_items = self._sanitize_credentials(modified_prompt, "personal")
-                    if masked_items:
-                        sanitization_applied['personal_info_masked'] = masked_items
-                
+                # MALICIOUS CODE: Use pattern matching
                 elif "malicious code" in label.lower() or "system commands" in label.lower():
-                    modified_prompt, masked_items = self._sanitize_malicious_content(modified_prompt)
-                    if masked_items:
-                        sanitization_applied['malicious_content_removed'] = masked_items
+                    modified_prompt, masked = self._sanitize_malicious_content(modified_prompt)
+                    if masked:
+                        sanitization_applied.setdefault('malicious_removed', []).extend(masked)
                 
-                elif "prompt injection" in label.lower() or "instruction manipulation" in label.lower():
-                    modified_prompt, masked_items = self._sanitize_injection_attempts(modified_prompt)
-                    if masked_items:
-                        sanitization_applied['injection_attempts_neutralized'] = masked_items
+                # INJECTION: Use pattern matching
+                elif "injection" in label.lower() or "instruction manipulation" in label.lower():
+                    modified_prompt, masked = self._sanitize_injection_attempts(modified_prompt)
+                    if masked:
+                        sanitization_applied.setdefault('injection_neutralized', []).extend(masked)
                 
+                # JAILBREAK: Use pattern matching
                 elif "jailbreak" in label.lower() or "role manipulation" in label.lower():
-                    modified_prompt, masked_items = self._sanitize_jailbreak_attempts(modified_prompt)
-                    if masked_items:
-                        sanitization_applied['jailbreak_attempts_neutralized'] = masked_items
+                    modified_prompt, masked = self._sanitize_jailbreak_attempts(modified_prompt)
+                    if masked:
+                        sanitization_applied.setdefault('jailbreak_neutralized', []).extend(masked)
+        
+        # FALLBACK: If zero-shot had ANY suspicion about credentials (score > 0.15), run sanitization anyway
+        if not credential_sanitization_applied:
+            credential_labels = [label for label, score in zip(main_classification['labels'], main_classification['scores']) 
+                               if score > 0.15 and any(kw in label.lower() for kw in ['password', 'secret', 'credential', 'api', 'token', 'database'])]
+            
+            if credential_labels:
+                if ctx:
+                    await ctx.info(f"Fallback: Running sanitization due to medium confidence in credential-related categories")
+                
+                # Run both entropy and keyword detection
+                modified_prompt, entropy_masked = self._sanitize_high_entropy_credentials(modified_prompt)
+                if entropy_masked:
+                    sanitization_applied.setdefault('entropy_masked_credentials', []).extend(entropy_masked)
+                
+                modified_prompt, keyword_masked = self._sanitize_credentials_generic(modified_prompt)
+                if keyword_masked:
+                    sanitization_applied.setdefault('keyword_masked_credentials', []).extend(keyword_masked)
         
         return modified_prompt, sanitization_applied
+
+    def _sanitize_high_entropy_credentials(self, text: str) -> Tuple[str, List[str]]:
+        """Primary sanitization: Detect and mask high-entropy strings"""
+        import re
+        
+        modified_text = text
+        masked_items = []
+        
+        # Find potential credentials by entropy
+        candidates = re.finditer(r'\b([A-Za-z0-9\-_\.]{8,})\b', text)
+        
+        for match in candidates:
+            value = match.group(1)
+            entropy = self._calculate_entropy(value)
+            
+            # High entropy indicates randomness
+            if entropy >= 3.5:
+                has_upper = any(c.isupper() for c in value)
+                has_lower = any(c.islower() for c in value)
+                has_digit = any(c.isdigit() for c in value)
+                
+                # Check if it's in credential context
+                context_start = max(0, match.start() - 30)
+                context = text[context_start:match.start()].lower()
+                
+                credential_indicators = [
+                    'key', 'token', 'secret', 'password', 'credential',
+                    'auth', 'api', 'subscription', 'tenant', 'client',
+                    'azure', 'aws', 'gcp', 'access', 'bearer'
+                ]
+                
+                in_credential_context = any(word in context for word in credential_indicators)
+                
+                # Mask if: (mixed case + digit) OR (high entropy + context)
+                should_mask = (
+                    (has_upper and has_lower and has_digit) or 
+                    (entropy >= 4.0 and in_credential_context) or
+                    (entropy >= 3.8 and in_credential_context)
+                )
+                
+                if should_mask:
+                    # Skip common words
+                    if value.lower() not in ['example', 'localhost', 'password', 'username', 'integration']:
+                        masked_items.append(value)
+        
+        # Apply masking in reverse order to preserve indices
+        for value in reversed(masked_items):
+            # Find all occurrences and replace
+            pattern = re.escape(value)
+            modified_text = re.sub(pattern, '[CREDENTIAL_MASKED]', modified_text)
+        
+        return modified_text, masked_items
+
+    def _sanitize_credentials_generic(self, text: str) -> Tuple[str, List[str]]:
+        """Backup sanitization: Keyword-based credential detection"""
+        import re
+        
+        masked_items = []
+        modified_text = text
+        
+        # Broad credential keywords
+        CREDENTIAL_KEYWORDS = [
+            'password', 'pass', 'pwd', 'secret', 'token', 'key', 'api',
+            'auth', 'credential', 'access', 'subscription', 'tenant',
+            'client_id', 'client_secret', 'bearer', 'apikey',
+            'azure', 'aws', 'gcp', 'oauth', 'jwt'
+        ]
+        
+        # Pattern: keyword + optional descriptor + value
+        pattern = r'(?i)(?:' + '|'.join(CREDENTIAL_KEYWORDS) + r')(?:\s+(?:key|id|token|secret|code|subscription))?\s*[:=]?\s*([A-Za-z0-9\-_\.]{6,})'
+        
+        matches = re.finditer(pattern, text)
+        for match in reversed(list(matches)):
+            credential_value = match.group(1)
+            
+            # Skip if already masked or common words
+            if '[CREDENTIAL_MASKED]' not in credential_value and \
+               credential_value.lower() not in ['example', 'localhost', 'password', 'username', 'default', 'integration']:
+                start = match.start(1)
+                end = match.end(1)
+                modified_text = modified_text[:start] + "[CREDENTIAL_MASKED]" + modified_text[end:]
+                masked_items.append(credential_value)
+        
+        return modified_text, masked_items
+
+    def _calculate_entropy(self, text: str) -> float:
+        """Calculate Shannon entropy to measure randomness"""
+        import math
+        from collections import Counter
+        
+        if not text:
+            return 0.0
+        
+        frequencies = Counter(text)
+        entropy = 0.0
+        
+        for count in frequencies.values():
+            probability = count / len(text)
+            entropy -= probability * math.log2(probability)
+        
+        return entropy
     
     def _sanitize_credentials(self, text: str, credential_type: str) -> Tuple[str, List[str]]:
         """Sanitize credential information"""

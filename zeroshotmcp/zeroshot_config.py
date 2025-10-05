@@ -72,3 +72,18 @@ PERFORMANCE_CONFIG = {
     "timeout_seconds": 30,  # Request timeout
     "max_concurrent_requests": 10
 }
+
+# Sanitization Configuration
+SANITIZATION_CONFIG = {
+    # Detection thresholds
+    "zeroshot_trigger_threshold": 0.5,  # Confidence to trigger sanitization
+    
+    # Entropy detection settings
+    "entropy_threshold_high": 4.0,      # Always mask (very random)
+    "entropy_threshold_medium": 3.5,    # Mask if in context
+    "require_mixed_case": True,         # Check for upper+lower+digit
+    
+    # Keyword backup settings  
+    "min_credential_length": 6,         # Minimum length
+    "excluded_words": ['example', 'localhost', 'password', 'username', 'default', 'integration']
+}
