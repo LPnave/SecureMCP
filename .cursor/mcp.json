@@ -1,7 +1,7 @@
 {
     "mcpServers": {
         "SecurePromptValidator": {
-            "url": "http://localhost:8001/mcp/",
+            "url": "http://localhost:8002/mcp/",
             "headers": {
                 "Authorization": "Bearer spv-admin-dev-2024-abc123"
             }
