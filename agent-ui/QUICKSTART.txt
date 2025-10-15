@@ -1,0 +1,79 @@
+╔══════════════════════════════════════════════════════════════╗
+║          SecureMCP Agent UI - Quick Start Guide             ║
+╚══════════════════════════════════════════════════════════════╝
+
+📋 PREREQUISITES:
+   ✓ Python 3.9+
+   ✓ Node.js 18+
+   ✓ GPT-OSS Docker running (e.g., http://localhost:8080)
+
+🚀 START IN 3 STEPS:
+
+1️⃣  PYTHON BACKEND:
+   cd agent-ui/python-backend
+   pip install -r requirements.txt
+   python -m spacy download en_core_web_sm
+   
+   # Create .env file:
+   GPT_OSS_URL=http://localhost:8080/v1/chat/completions
+   
+   python -m app.main
+
+2️⃣  FRONTEND:
+   cd agent-ui/secure_agent
+   npm install
+   npm run dev
+
+3️⃣  TEST:
+   Open: http://localhost:3000
+   Type: "Hello, what can you help me with?"
+
+🔍 VERIFY SETUP:
+
+   Backend Health:
+   curl http://localhost:8003/api/health
+
+   GPT-OSS Connection:
+   curl http://localhost:8080/v1/models
+
+🛠️  CONFIGURATION:
+
+   Python Backend (.env):
+   - PORT=8003
+   - GPT_OSS_URL=http://localhost:8080/v1/chat/completions
+   - GPT_OSS_MODEL=gpt-3.5-turbo
+   - DEFAULT_SECURITY_LEVEL=medium
+
+   Frontend (.env.local):
+   - NEXT_PUBLIC_SANITIZER_API_URL=http://localhost:8003
+
+📊 ARCHITECTURE:
+
+   Frontend → Python Backend → GPT-OSS
+   (Next.js)  (Sanitization)    (AI Model)
+
+🔒 SECURITY FLOW:
+
+   1. User sends message
+   2. Backend sanitizes prompt (Zero-shot ML)
+   3. Sanitized prompt → GPT-OSS
+   4. AI response → User
+
+⚡ COMMON ISSUES:
+
+   ❌ "Cannot connect to AI model"
+   → Check GPT_OSS_URL in .env
+   → Verify Docker is running: docker ps
+
+   ❌ "ModuleNotFoundError: No module named 'app'"
+   → Run from python-backend/ directory
+   → Use: python -m app.main
+
+   ❌ 422 or 503 errors
+   → Check backend is running: curl localhost:8003/api/health
+   → Check CORS_ORIGINS in .env
+
+📚 FULL DOCS: See SETUP_GUIDE.md
+
+🎉 You're all set! Happy chatting with secure AI!
+

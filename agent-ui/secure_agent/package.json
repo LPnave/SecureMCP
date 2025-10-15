@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "dev:backend": "cd ../python-backend && python app/main.py",
+    "dev:full": "concurrently \"npm run dev:backend\" \"npm run dev\" --names \"backend,frontend\" --prefix-colors \"blue,green\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -17,9 +19,9 @@
     "tailwindStylesheet": "app/globals.css"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^2.0.42",
     "@assistant-ui/react": "^0.11.24",
     "@assistant-ui/react-ai-sdk": "^1.1.4",
+    "@assistant-ui/react-data-stream": "^0.11.3",
     "@assistant-ui/react-markdown": "^0.11.0",
     "@radix-ui/react-avatar": "^1.1.10",
     "@radix-ui/react-dialog": "^1.1.15",
@@ -47,6 +49,7 @@
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^8.2.2",
     "eslint": "^9",
     "eslint-config-next": "15.5.4",
     "prettier": "^3.6.2",

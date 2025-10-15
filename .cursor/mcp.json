@@ -5,6 +5,10 @@
             "headers": {
                 "Authorization": "Bearer spv-admin-dev-2024-abc123"
             }
-        }
+        },
+        "assistant-ui": {
+            "command": "npx",
+            "args": ["-y", "@assistant-ui/mcp-docs-server"]
+          }
     }
 }  

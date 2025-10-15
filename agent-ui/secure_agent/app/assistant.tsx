@@ -1,10 +1,7 @@
 "use client";
 
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
-import {
-  useChatRuntime,
-  AssistantChatTransport,
-} from "@assistant-ui/react-ai-sdk";
+import { useDataStreamRuntime } from "@assistant-ui/react-data-stream";
 import { Thread } from "@/components/assistant-ui/thread";
 import {
   SidebarInset,
@@ -23,10 +20,8 @@ import {
 } from "@/components/ui/breadcrumb";
 
 export const Assistant = () => {
-  const runtime = useChatRuntime({
-    transport: new AssistantChatTransport({
-      api: "/api/chat",
-    }),
+  const runtime = useDataStreamRuntime({
+    api: "http://localhost:8003/api/chat",  // Call Python backend directly
   });
 
   return (
