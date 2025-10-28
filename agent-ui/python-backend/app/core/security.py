@@ -41,7 +41,37 @@ class ZeroShotSecurityValidator:
         self.setup_models()
         self.setup_classification_categories()
         self.setup_spacy_matcher()
+        self._configure_security_thresholds()
         logger.info(f"Security validator initialized with level: {security_level.value}")
+    
+    def _configure_security_thresholds(self):
+        """Configure detection thresholds based on security level"""
+        if self.security_level == SecurityLevel.LOW:
+            # LOW: Development/Testing - Less sensitive, warn only
+            self.detection_threshold = 0.7      # Higher threshold for detection
+            self.blocking_threshold = 0.95      # Almost never block
+            self.entropy_threshold = 4.2        # Higher entropy required
+            self.credential_fallback_threshold = 0.25  # Less aggressive fallback
+            self.block_mode = False             # Warn only, don't block
+            logger.info("Security thresholds: LOW (development mode - warnings only)")
+        
+        elif self.security_level == SecurityLevel.MEDIUM:
+            # MEDIUM: Production Default - Balanced protection
+            self.detection_threshold = 0.6      # Moderate detection
+            self.blocking_threshold = 0.8       # Block high-confidence threats
+            self.entropy_threshold = 3.5        # Standard entropy threshold
+            self.credential_fallback_threshold = 0.15  # Standard fallback
+            self.block_mode = True              # Block high-confidence threats
+            logger.info("Security thresholds: MEDIUM (balanced production mode)")
+        
+        else:  # HIGH
+            # HIGH: Maximum Security - Very sensitive, aggressive blocking
+            self.detection_threshold = 0.4      # Lower threshold = more sensitive
+            self.blocking_threshold = 0.6       # Block medium+ confidence threats
+            self.entropy_threshold = 3.0        # Lower entropy = more aggressive
+            self.credential_fallback_threshold = 0.1   # Very aggressive fallback
+            self.block_mode = True              # Always block threats
+            logger.info("Security thresholds: HIGH (maximum security mode)")
 
     def setup_models(self):
         """Initialize zero-shot classification models"""
@@ -210,7 +240,7 @@ class ZeroShotSecurityValidator:
         # Detailed classification for each detected threat type
         detailed_classifications = {}
         for category, score in zip(main_classification['labels'], main_classification['scores']):
-            if score > 0.6 and category != "normal safe content":
+            if score > self.detection_threshold and category != "normal safe content":
                 detailed_result = self._detailed_classification(prompt, category)
                 detailed_classifications[category] = detailed_result
         
@@ -381,7 +411,7 @@ class ZeroShotSecurityValidator:
         jailbreak_sanitization_applied = False
         
         for i, (label, score) in enumerate(zip(main_classification['labels'], main_classification['scores'])):
-            if score > 0.5 and label != "normal safe content":
+            if score > self.detection_threshold and label != "normal safe content":
                 
                 if any(keyword in label.lower() for keyword in ['password', 'secret', 'credential', 'api key', 'token', 'personal']):
                     credential_sanitization_applied = True
@@ -414,7 +444,7 @@ class ZeroShotSecurityValidator:
         # FALLBACK: Credential sanitization
         if not credential_sanitization_applied:
             credential_labels = [label for label, score in zip(main_classification['labels'], main_classification['scores']) 
-                               if score > 0.15 and any(kw in label.lower() for kw in ['password', 'secret', 'credential', 'api', 'token', 'database'])]
+                               if score > self.credential_fallback_threshold and any(kw in label.lower() for kw in ['password', 'secret', 'credential', 'api', 'token', 'database'])]
             
             if credential_labels:
                 modified_prompt, entropy_masked = self._sanitize_high_entropy_credentials(modified_prompt)
@@ -460,7 +490,7 @@ class ZeroShotSecurityValidator:
             value = match.group(1)
             entropy = self._calculate_entropy(value)
             
-            if entropy >= 3.5:
+            if entropy >= self.entropy_threshold:
                 has_upper = any(c.isupper() for c in value)
                 has_lower = any(c.islower() for c in value)
                 has_digit = any(c.isdigit() for c in value)
@@ -733,28 +763,33 @@ class ZeroShotSecurityValidator:
         blocked_patterns = []
         
         for label, score in zip(main_classification['labels'], main_classification['scores']):
-            if score > 0.6 and label != "normal safe content":
+            if score > self.detection_threshold and label != "normal safe content":
                 
-                if score > 0.8:
+                # Determine if we should block based on score and security level
+                should_block = self.block_mode and score > self.blocking_threshold
+                
+                if should_block:
                     if "password" in label.lower() or "secret" in label.lower():
                         blocked_patterns.append("credential_exposure")
-                        warnings.append(f"High-confidence credential exposure detected: {label}")
+                        warnings.append(f"[{self.security_level.value.upper()}] Credential exposure detected: {label} (confidence: {score:.2f})")
                     
                     elif "malicious" in label.lower() or "system commands" in label.lower():
                         blocked_patterns.append("malicious_code")
-                        warnings.append(f"High-confidence malicious content detected: {label}")
+                        warnings.append(f"[{self.security_level.value.upper()}] Malicious content detected: {label} (confidence: {score:.2f})")
                     
                     elif "injection" in label.lower() or "manipulation" in label.lower():
                         blocked_patterns.append("prompt_injection")
-                        warnings.append(f"High-confidence injection attempt detected: {label}")
+                        warnings.append(f"[{self.security_level.value.upper()}] Injection attempt detected: {label} (confidence: {score:.2f})")
                     
                     elif "jailbreak" in label.lower() or "manipulation" in label.lower():
-                        if self.security_level == SecurityLevel.HIGH:
+                        # HIGH always blocks jailbreak, MEDIUM blocks high-confidence only
+                        if self.security_level == SecurityLevel.HIGH or score > 0.85:
                             blocked_patterns.append("jailbreak_attempt")
-                        warnings.append(f"High-confidence jailbreak attempt detected: {label}")
+                        warnings.append(f"[{self.security_level.value.upper()}] Jailbreak attempt detected: {label} (confidence: {score:.2f})")
                 
                 else:
-                    warnings.append(f"Potential security issue detected: {label} (confidence: {score:.2f})")
+                    # Warn only (not blocking)
+                    warnings.append(f"[{self.security_level.value.upper()}] Potential security issue: {label} (confidence: {score:.2f})")
         
         return warnings, blocked_patterns
     
