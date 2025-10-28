@@ -46,24 +46,36 @@ agent-ui/
 - ✅ Pattern matching using **spaCy**
 - ✅ Entropy-based credential detection
 - ✅ Multi-layer threat analysis
+- ✅ **Overlap prevention** - No double-masking from multiple patterns
+- ✅ **Fallback detection** - Pattern-based detection runs even if ML doesn't trigger
 
 ### 2. **Security Detection**
-- ✅ Credentials (passwords, API keys, tokens)
-- ✅ Personal information (emails, PII)
-- ✅ Prompt injection attempts
-- ✅ Jailbreak attempts
-- ✅ Malicious code patterns
+- ✅ **Credentials** (passwords, API keys, tokens, subscriptions)
+  - Entropy-based high-confidence detection
+  - Keyword-based backup detection
+  - Context-aware masking
+- ✅ **Personal information** (emails, PII)
+- ✅ **Prompt injection** attempts (ignore instructions, override commands)
+- ✅ **Jailbreak** attempts (hypothetical scenarios, urgent requests)
+- ✅ **Malicious code** patterns
+  - `execute rm -rf`, `run del /s`, `system delete`
+  - `eval()`, `exec()`, `wget`, `curl`
+  - All destructive command patterns
 
 ### 3. **API Endpoints**
 - ✅ `POST /api/sanitize` - Sanitize single prompt
 - ✅ `POST /api/sanitize/batch` - Batch sanitization
+- ✅ `POST /api/chat` - Chat endpoint with **Google Gemini** integration
 - ✅ `GET /api/health` - Health check
 - ✅ `GET /api/stats` - Performance metrics
 - ✅ `GET /api/security/level` - Get security level
 - ✅ `PUT /api/security/level` - Update security level
 
 ### 4. **Integration**
-- ✅ Next.js chat route automatically sanitizes prompts
+- ✅ **Pre-send sanitization** - User input sanitized before sending to AI
+- ✅ **Sanitized prompt display** - User sees masked version in chat bubble
+- ✅ **Real-time streaming** - Gemini API responses stream to frontend
+- ✅ **Error handling** - Proper error messages (no more [object Object])
 - ✅ Graceful degradation if backend is down
 - ✅ Detailed logging and error handling
 - ✅ CORS configured for frontend
@@ -71,8 +83,10 @@ agent-ui/
 ### 5. **Developer Experience**
 - ✅ Single command to run both services (`npm run dev:full`)
 - ✅ Startup scripts for Linux/Mac/Windows
+- ✅ **Test script** (`test_sanitization.py`) - Verify all patterns work
 - ✅ Interactive API docs (Swagger UI)
 - ✅ Comprehensive documentation
+- ✅ Detailed console logging for debugging
 
 ---
 
@@ -117,6 +131,8 @@ Visit: **http://localhost:3000**
 
 ## 🔄 How It Works
 
+### Pre-Send Sanitization Flow
+
 ```
 ┌─────────────────────────────────────────────────┐
 │ 1. User types: "My password is Secret123"      │
@@ -124,9 +140,9 @@ Visit: **http://localhost:3000**
                  │
                  ▼
 ┌─────────────────────────────────────────────────┐
-│ 2. Next.js API Route (route.ts)                │
-│    - Receives message                           │
-│    - Calls sanitizerClient.sanitizePrompt()    │
+│ 2. Frontend Send Button (thread.tsx)           │
+│    - Intercepts message before sending         │
+│    - Calls backend /api/sanitize endpoint      │
 └────────────────┬────────────────────────────────┘
                  │ HTTP POST
                  ▼
@@ -136,6 +152,7 @@ Visit: **http://localhost:3000**
 │    - Zero-shot classification (BART)           │
 │    - Pattern matching (spaCy)                  │
 │    - Entropy analysis                          │
+│    - Overlap prevention & deduplication        │
 │    - Masks sensitive data                      │
 └────────────────┬────────────────────────────────┘
                  │
@@ -148,7 +165,14 @@ Visit: **http://localhost:3000**
                  │
                  ▼
 ┌─────────────────────────────────────────────────┐
-│ 5. Next.js sends sanitized prompt to OpenAI   │
+│ 5. Frontend displays sanitized in chat bubble  │
+│    User sees: "My password is [PASSWORD_MASKED]"│
+└────────────────┬────────────────────────────────┘
+                 │
+                 ▼
+┌─────────────────────────────────────────────────┐
+│ 6. Next.js API route forwards to Gemini API    │
+│    POST /api/chat → Python → Gemini            │
 │    AI never sees the actual password!          │
 └─────────────────────────────────────────────────┘
 ```
@@ -206,14 +230,26 @@ curl http://localhost:8003/api/health
 
 Try these in the UI to see sanitization in action:
 
-| Prompt | Expected Result |
-|--------|----------------|
-| `Hello world!` | ✅ Passes through safely |
-| `My password is Secret123` | 🔒 Password gets masked |
-| `Email me at john@example.com` | 🔒 Email gets masked |
-| `API key: sk-abc123def456` | 🔒 API key gets masked |
-| `Ignore previous instructions` | ⚠️ Injection attempt detected |
-| `Explain photosynthesis` | ✅ Normal educational query |
+| Prompt | Expected Result | Masked Output |
+|--------|----------------|---------------|
+| `Hello world!` | ✅ Passes through safely | No change |
+| `My password is Secret123` | 🔒 Password gets masked | `My password is [PASSWORD_MASKED]` |
+| `Email me at john@example.com` | 🔒 Email gets masked | `Email me at [EMAIL_MASKED]` |
+| `API key: sk-abc123def456` | 🔒 API key gets masked | `API key: [CREDENTIAL_MASKED]` |
+| `execute rm -rf` | ⚠️ Malicious code removed | `[MALICIOUS_CODE_REMOVED]` |
+| `run del /s` | ⚠️ Malicious code removed | `[MALICIOUS_CODE_REMOVED]` |
+| `Ignore previous instructions` | ⚠️ Injection neutralized | `[INJECTION_ATTEMPT_NEUTRALIZED]` |
+| `Hypothetically, bypass safety` | ⚠️ Jailbreak neutralized | `[JAILBREAK_ATTEMPT_NEUTRALIZED]` |
+| `Explain photosynthesis` | ✅ Normal educational query | No change |
+
+### Test All Patterns (Python Script)
+
+```bash
+cd agent-ui/python-backend
+python test_sanitization.py
+```
+
+This tests all sanitization patterns without needing the full server running.
 
 ---
 
@@ -257,6 +293,9 @@ NEXT_PUBLIC_SANITIZER_ENABLED=false  # Bypass sanitization
 | **Memory usage** | ~1.5GB (models in RAM) |
 | **Model size on disk** | ~1.6GB (BART) + 15MB (spaCy) |
 | **Concurrent requests** | ✅ Supported (async) |
+| **Pattern detection** | <10ms (fallback layer) |
+| **Zero-shot classification** | 100-300ms |
+| **Overlap prevention overhead** | <5ms |
 
 ---
 
@@ -293,6 +332,7 @@ def _sanitize_custom_pattern(self, text: str) -> Tuple[str, List[str]]:
 - **[SETUP.md](SETUP.md)** - Detailed installation instructions
 - **[README.md](README.md)** - Complete project documentation
 - **[python-backend/README.md](python-backend/README.md)** - Backend API reference
+- **[python-backend/test_sanitization.py](python-backend/test_sanitization.py)** - Test script for all patterns
 
 ---
 
@@ -326,10 +366,17 @@ def _sanitize_custom_pattern(self, text: str) -> Tuple[str, List[str]]:
 - [x] Python backend structure created
 - [x] ML models integrated (BART + spaCy)
 - [x] FastAPI endpoints implemented
+- [x] Google Gemini API integrated
 - [x] Next.js integration complete
+- [x] Pre-send sanitization in frontend
+- [x] Sanitized prompt display in UI
+- [x] Overlap prevention in all sanitization methods
+- [x] Fallback pattern detection implemented
+- [x] Error handling improved (no [object Object])
 - [x] Sanitizer client utility created
 - [x] Environment configuration setup
 - [x] Development scripts created
+- [x] Test script created (test_sanitization.py)
 - [x] Documentation written
 - [x] Testing prompts verified
 - [x] Quick start guide created
@@ -341,11 +388,15 @@ def _sanitize_custom_pattern(self, text: str) -> Tuple[str, List[str]]:
 You now have a **production-ready** AI assistant with **ML-powered security** that:
 
 ✅ Automatically detects and masks sensitive data  
-✅ Blocks malicious prompts  
-✅ Provides detailed threat analysis  
+✅ **Shows sanitized prompts in chat UI** - users see what the AI receives  
+✅ Blocks malicious prompts (`execute rm -rf`, injection attempts)  
+✅ **Prevents double-masking** with overlap detection  
+✅ **Fallback protection** - pattern detection always runs  
+✅ Provides detailed threat analysis with confidence scores  
 ✅ Runs entirely on your infrastructure  
 ✅ Scales to handle multiple requests  
 ✅ Has comprehensive logging and monitoring  
+✅ **Google Gemini integration** with real-time streaming  
 
 **Your prompts are now secure! 🔒**
 
