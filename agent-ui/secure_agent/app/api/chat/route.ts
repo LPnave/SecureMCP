@@ -1,11 +1,11 @@
 /**
- * Chat API Route - Integrated with Python Backend
+ * Chat API Route - Proxy to Python Backend
  * 
  * Flow:
  * 1. Frontend sends messages to this route
  * 2. This route forwards to Python backend
- * 3. Python backend sanitizes and calls local GPT-OSS
- * 4. Response is returned to frontend
+ * 3. Python backend sanitizes and calls Gemini
+ * 4. This route parses the stream and forwards sanitization metadata
  */
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_SANITIZER_API_URL || 'http://localhost:8003';
@@ -25,7 +25,7 @@ export async function POST(req: Request) {
     
     console.log(`[Chat] Received ${messages.length} messages`);
     
-    // Forward to Python backend (which handles sanitization + GPT-OSS)
+    // Forward to Python backend (which handles sanitization + Gemini)
     const response = await fetch(`${BACKEND_URL}/api/chat`, {
       method: 'POST',
       headers: {
@@ -34,7 +34,7 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         messages: messages,
         security_level: 'medium',
-        stream: false
+        stream: true
       }),
     });
 
@@ -42,74 +42,98 @@ export async function POST(req: Request) {
       const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
       console.error('[Chat] Backend error:', error);
       
-      return new Response(
-        JSON.stringify({
-          error: error.detail || 'Failed to get response from AI',
-          status: response.status
-        }),
-        {
-          status: response.status,
-          headers: { 'Content-Type': 'application/json' }
+      // Extract error message properly
+      const errorMessage = error.detail || error.error || 'Failed to get response from AI';
+      
+      // Return error in data stream protocol format
+      const encoder = new TextEncoder();
+      const errorStream = new ReadableStream({
+        start(controller) {
+          // Send error as text delta
+          controller.enqueue(encoder.encode(`0:${JSON.stringify(errorMessage)}\n`));
+          // Send finish with error reason
+          controller.enqueue(encoder.encode(`e:${JSON.stringify({ finishReason: 'error' })}\n`));
+          controller.close();
         }
-      );
+      });
+      
+      return new Response(errorStream, {
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'X-Vercel-AI-Data-Stream': 'v1',
+        },
+      });
     }
 
-    const data = await response.json();
+    // Get the stream from Python backend
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
     
-    // Log sanitization info
-    if (data.sanitization_applied) {
-      console.log('[Chat] Sanitization was applied to the prompt');
-      console.log('[Chat] Warnings:', data.warnings);
-      if (data.original_prompt) {
-        console.log('[Chat] Original:', data.original_prompt);
-        console.log('[Chat] Sanitized:', data);
-        console.log('[Chat] Sanitized:', data.message.content);
-      }
+    if (!reader) {
+      throw new Error('No response body from backend');
     }
-      // Return the AI message in the format expected by assistant-ui
-      const aiMessage = data.message;
-  
-      console.log('[Chat] Full data received:', JSON.stringify(data, null, 2));
-      console.log('[Chat] aiMessage:', aiMessage);
-      console.log('[Chat] aiMessage.content:', aiMessage?.content);
-      
-      // Validate that we have content
-      if (!aiMessage || !aiMessage.content) {
-        console.error('[Chat] No content in response!', { data, aiMessage });
-        throw new Error('No content in AI response');
-      }
-      
-      const text = aiMessage.content;
-      console.log('[Chat] Gemini response received, length:', text.length);
-      console.log('[Chat] Response preview:', text.substring(0, 100));
-      
+
     // Create a properly formatted stream for assistant-ui
-    // Format: Vercel AI SDK v3 data stream protocol
     const encoder = new TextEncoder();
     
     const stream = new ReadableStream({
-      start(controller) {
+      async start(controller) {
         try {
-          // Stream text in chunks with proper protocol
-          const chunkSize = 1; // Small chunks for smooth streaming effect
-          for (let i = 0; i < text.length; i += chunkSize) {
-            const chunk = text.slice(i, i + chunkSize);
-            // Format: 0:"text"\n for text deltas
-            controller.enqueue(encoder.encode(`0:${JSON.stringify(chunk)}\n`));
+          let buffer = '';
+          let sanitizationData: any = null;
+          
+          // Read the stream from Python backend
+          while (true) {
+            const { done, value } = await reader.read();
+            
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
+            
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              
+              // Parse each line (format: "code:data")
+              const colonIndex = line.indexOf(':');
+              if (colonIndex === -1) continue;
+              
+              const code = line.substring(0, colonIndex);
+              const data = line.substring(colonIndex + 1);
+              
+              if (code === '8') {
+                // Sanitization metadata - just log it, don't display to avoid [object Object] issue
+                try {
+                  const metadata = JSON.parse(data);
+                  sanitizationData = metadata[0]; // Get first item from array
+                  console.log('[Chat Proxy] Sanitization applied:', sanitizationData);
+                  
+                  // Don't send as annotation to avoid [object Object] display issue
+                  // The sanitization already happened, user doesn't need to see internal metadata
+                } catch (e) {
+                  console.error('[Chat Proxy] Failed to parse sanitization metadata:', e);
+                }
+              } else if (code === '0') {
+                // Text delta - forward as-is
+                controller.enqueue(encoder.encode(line + '\n'));
+              } else if (code === 'd') {
+                // Finish message - convert to 'e' format for assistant-ui
+                try {
+                  const finishData = JSON.parse(data);
+                  controller.enqueue(encoder.encode(`e:${JSON.stringify(finishData)}\n`));
+                } catch (e) {
+                  // If parse fails, send default finish
+                  controller.enqueue(encoder.encode(`e:${JSON.stringify({ finishReason: 'stop' })}\n`));
+                }
+              }
+            }
           }
           
-          // Send finish message with proper metadata
-          // Format: e:{"finishReason":"stop","usage":{...}}\n
-          const finishData = {
-            finishReason: 'stop',
-            usage: { promptTokens: 0, completionTokens: text.length },
-          };
-          controller.enqueue(encoder.encode(`e:${JSON.stringify(finishData)}\n`));
-          
           controller.close();
-          console.log('[Chat Stream] Successfully streamed response');
+          console.log('[Chat Proxy] Stream completed');
         } catch (error) {
-          console.error('[Chat Stream] Error:', error);
+          console.error('[Chat Proxy] Error:', error);
           controller.error(error);
         }
       },
@@ -119,8 +143,6 @@ export async function POST(req: Request) {
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
         'X-Vercel-AI-Data-Stream': 'v1',
-        'X-Sanitization-Applied': data.sanitization_applied.toString(),
-        'X-Warnings': JSON.stringify(data.warnings),
       },
     });
 

@@ -358,7 +358,7 @@ async def chat(raw_request: FastAPIRequest):
                         "contents": gemini_contents,
                         "generationConfig": {
                             "temperature": 0.7,
-                            "maxOutputTokens": 8192,
+                            "maxOutputTokens": 5000,
                         }
                     }
                 )
@@ -402,6 +402,19 @@ async def chat(raw_request: FastAPIRequest):
         # Create data stream protocol response
         async def generate_data_stream():
             """Generate data stream protocol format for assistant-ui"""
+            
+            # First, send sanitization info if the prompt was sanitized
+            if sanitization_applied:
+                sanitization_data = {
+                    "type": "sanitization",
+                    "original": original_content,
+                    "sanitized": sanitized_content,
+                    "warnings": validation_result.warnings
+                }
+                # Send as metadata annotation: 8:{"type":"sanitization",...}\n
+                yield f'8:{json.dumps([sanitization_data])}\n'
+                logger.info("Sent sanitization metadata to frontend")
+            
             # Stream text in chunks (data stream protocol format)
             chunk_size = 5  # Small chunks for smooth streaming
             for i in range(0, len(ai_message_content), chunk_size):

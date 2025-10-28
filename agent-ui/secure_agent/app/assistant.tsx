@@ -21,7 +21,7 @@ import {
 
 export const Assistant = () => {
   const runtime = useDataStreamRuntime({
-    api: "http://localhost:8003/api/chat",  // Call Python backend directly
+    api: "/api/chat",  // Use Next.js API route as proxy
   });
 
   return (

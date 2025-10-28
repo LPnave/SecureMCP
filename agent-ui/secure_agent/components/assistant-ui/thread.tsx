@@ -17,9 +17,12 @@ import {
   ErrorPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useComposerRuntime,
+  useThreadRuntime,
 } from "@assistant-ui/react";
 
 import type { FC } from "react";
+import { useCallback } from "react";
 import { LazyMotion, MotionConfig, domAnimation } from "motion/react";
 import * as m from "motion/react-m";
 
@@ -189,25 +192,82 @@ const Composer: FC = () => {
   );
 };
 
+const BACKEND_URL = 'http://localhost:8003';
+
 const ComposerAction: FC = () => {
+  const composer = useComposerRuntime();
+  const thread = useThreadRuntime();
+
+  const handleSanitizedSend = useCallback(async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const state = composer.getState();
+    const text = state.text || "";
+    
+    if (!text.trim()) return;
+
+    try {
+      // First, sanitize the input
+      console.log('[SanitizingComposer] Sanitizing input:', text.substring(0, 100));
+      
+      const sanitizeResponse = await fetch(`${BACKEND_URL}/api/sanitize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          prompt: text,
+          security_level: 'medium'
+        }),
+      });
+
+      const sanitizeData = await sanitizeResponse.json();
+      const sanitizedText = sanitizeData.sanitized_prompt || text;
+      
+      console.log('[SanitizingComposer] Sanitization response:', sanitizeData);
+      console.log('[SanitizingComposer] Using sanitized text:', sanitizedText);
+      
+      if (sanitizedText !== text) {
+        console.log('[SanitizingComposer] Input was sanitized');
+        console.log('Original:', text);
+        console.log('Sanitized:', sanitizedText);
+      } else {
+        console.log('[SanitizingComposer] No sanitization needed');
+      }
+
+      // Clear the composer and cancel any ongoing composition
+      composer.cancel();
+      
+      // Add user message with sanitized content
+      console.log('[SanitizingComposer] Appending message to thread');
+      thread.append({
+        role: "user" as const,
+        content: [{ type: "text" as const, text: sanitizedText }],
+      });
+      
+    } catch (error) {
+      console.error('[SanitizingComposer] Error:', error);
+      // On error, send original (fail-safe)
+      composer.send();
+    }
+  }, [composer, thread]);
+
   return (
     <div className="aui-composer-action-wrapper relative mx-1 mt-2 mb-2 flex items-center justify-between">
       <ComposerAddAttachment />
 
       <ThreadPrimitive.If running={false}>
-        <ComposerPrimitive.Send asChild>
-          <TooltipIconButton
-            tooltip="Send message"
-            side="bottom"
-            type="submit"
-            variant="default"
-            size="icon"
-            className="aui-composer-send size-[34px] rounded-full p-1"
-            aria-label="Send message"
-          >
-            <ArrowUpIcon className="aui-composer-send-icon size-5" />
-          </TooltipIconButton>
-        </ComposerPrimitive.Send>
+        <TooltipIconButton
+          tooltip="Send message"
+          side="bottom"
+          type="button"
+          variant="default"
+          size="icon"
+          className="aui-composer-send size-[34px] rounded-full p-1"
+          aria-label="Send message"
+          onClick={handleSanitizedSend}
+        >
+          <ArrowUpIcon className="aui-composer-send-icon size-5" />
+        </TooltipIconButton>
       </ThreadPrimitive.If>
 
       <ThreadPrimitive.If running>

@@ -376,6 +376,9 @@ class ZeroShotSecurityValidator:
         modified_prompt = prompt
         sanitization_applied = {}
         credential_sanitization_applied = False
+        malicious_sanitization_applied = False
+        injection_sanitization_applied = False
+        jailbreak_sanitization_applied = False
         
         for i, (label, score) in enumerate(zip(main_classification['labels'], main_classification['scores'])):
             if score > 0.5 and label != "normal safe content":
@@ -391,20 +394,24 @@ class ZeroShotSecurityValidator:
                         sanitization_applied.setdefault('keyword_masked_credentials', []).extend(keyword_masked)
                 
                 elif "malicious code" in label.lower() or "system commands" in label.lower():
+                    malicious_sanitization_applied = True
                     modified_prompt, masked = self._sanitize_malicious_content(modified_prompt)
                     if masked:
                         sanitization_applied.setdefault('malicious_removed', []).extend(masked)
                 
                 elif "injection" in label.lower() or "instruction manipulation" in label.lower():
+                    injection_sanitization_applied = True
                     modified_prompt, masked = self._sanitize_injection_attempts(modified_prompt)
                     if masked:
                         sanitization_applied.setdefault('injection_neutralized', []).extend(masked)
                 
                 elif "jailbreak" in label.lower() or "role manipulation" in label.lower():
+                    jailbreak_sanitization_applied = True
                     modified_prompt, masked = self._sanitize_jailbreak_attempts(modified_prompt)
                     if masked:
                         sanitization_applied.setdefault('jailbreak_neutralized', []).extend(masked)
         
+        # FALLBACK: Credential sanitization
         if not credential_sanitization_applied:
             credential_labels = [label for label, score in zip(main_classification['labels'], main_classification['scores']) 
                                if score > 0.15 and any(kw in label.lower() for kw in ['password', 'secret', 'credential', 'api', 'token', 'database'])]
@@ -417,6 +424,28 @@ class ZeroShotSecurityValidator:
                 modified_prompt, keyword_masked = self._sanitize_credentials_generic(modified_prompt)
                 if keyword_masked:
                     sanitization_applied.setdefault('keyword_masked_credentials', []).extend(keyword_masked)
+        
+        # FALLBACK: Always run pattern-based malicious content detection
+        # This catches short commands that zero-shot might miss
+        if not malicious_sanitization_applied:
+            modified_prompt, masked = self._sanitize_malicious_content(modified_prompt)
+            if masked:
+                sanitization_applied.setdefault('malicious_removed', []).extend(masked)
+                logger.info(f"Pattern-based detection caught {len(masked)} malicious patterns")
+        
+        # FALLBACK: Always run pattern-based injection detection
+        if not injection_sanitization_applied:
+            modified_prompt, masked = self._sanitize_injection_attempts(modified_prompt)
+            if masked:
+                sanitization_applied.setdefault('injection_neutralized', []).extend(masked)
+                logger.info(f"Pattern-based detection caught {len(masked)} injection attempts")
+        
+        # FALLBACK: Always run pattern-based jailbreak detection
+        if not jailbreak_sanitization_applied:
+            modified_prompt, masked = self._sanitize_jailbreak_attempts(modified_prompt)
+            if masked:
+                sanitization_applied.setdefault('jailbreak_neutralized', []).extend(masked)
+                logger.info(f"Pattern-based detection caught {len(masked)} jailbreak attempts")
         
         return modified_prompt, sanitization_applied
 
@@ -531,11 +560,25 @@ class ZeroShotSecurityValidator:
                 r'(?i)(this\s+is\s+)?(my\s+)?password\s+(?:is\s+)?([a-z0-9@#$%^&*_\\-]{4,})'
             ]
             
+            # Collect all matches
+            all_matches = []
             for pattern in password_patterns:
-                matches = re.finditer(pattern, text)
-                for match in reversed(list(matches)):
-                    modified_text, password_value = _mask_value(match, "[PASSWORD_MASKED]")
-                    masked_items.append(password_value)
+                for match in re.finditer(pattern, text):
+                    all_matches.append(match)
+            
+            # Remove overlapping matches
+            all_matches.sort(key=lambda x: (x.start(), -(x.end() - x.start())))
+            unique_matches = []
+            last_end = -1
+            for match in all_matches:
+                if match.start() >= last_end:
+                    unique_matches.append(match)
+                    last_end = match.end()
+            
+            # Apply replacements in reverse order
+            for match in reversed(unique_matches):
+                modified_text, password_value = _mask_value(match, "[PASSWORD_MASKED]")
+                masked_items.append(password_value)
         
         elif credential_type == "api_key":
             api_patterns = [
@@ -547,16 +590,32 @@ class ZeroShotSecurityValidator:
                 r'(pk_[a-zA-Z0-9]{20,})',
             ]
             
+            # Collect all matches
+            all_matches = []
             for pattern in api_patterns:
-                matches = re.finditer(pattern, text)
-                for match in reversed(list(matches)):
-                    modified_text, key_value = _mask_value(match, "[API_KEY_MASKED]")
-                    masked_items.append(key_value)
+                for match in re.finditer(pattern, text):
+                    all_matches.append(match)
+            
+            # Remove overlapping matches
+            all_matches.sort(key=lambda x: (x.start(), -(x.end() - x.start())))
+            unique_matches = []
+            last_end = -1
+            for match in all_matches:
+                if match.start() >= last_end:
+                    unique_matches.append(match)
+                    last_end = match.end()
+            
+            # Apply replacements in reverse order
+            for match in reversed(unique_matches):
+                modified_text, key_value = _mask_value(match, "[API_KEY_MASKED]")
+                masked_items.append(key_value)
         
         elif credential_type == "personal":
             email_pattern = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b'
-            matches = re.finditer(email_pattern, text)
-            for match in reversed(list(matches)):
+            matches = list(re.finditer(email_pattern, text))
+            
+            # Already non-overlapping, but process in reverse order
+            for match in reversed(matches):
                 modified_text, email = _mask_value(match, "[EMAIL_MASKED]")
                 masked_items.append(email)
         
@@ -567,6 +626,7 @@ class ZeroShotSecurityValidator:
         malicious_patterns = [
             r'(?i)(rm\s+-rf|del\s+/s|delete\s+all)',
             r'(?i)(execute|run|system)\s*\([^)]+\)',
+            r'(?i)(execute|run|system)\s+(rm|del|delete|format|destroy|wipe)(\s+[^\s]+)?',  # Catch "execute rm -rf" etc
             r'(?i)(eval|exec)\s*\([^)]+\)',
             r'(?i)(wget|curl)\s+[^\s]+',
             r'(?i)(format|destroy|wipe)\s+[^\s]+'
@@ -575,12 +635,25 @@ class ZeroShotSecurityValidator:
         masked_items = []
         modified_text = text
         
+        # Collect all matches from all patterns first
+        all_matches = []
         for pattern in malicious_patterns:
-            matches = re.finditer(pattern, text)
-            for match in reversed(list(matches)):
-                malicious_content = match.group(0)
-                masked_items.append(malicious_content)
-                modified_text = modified_text[:match.start()] + "[MALICIOUS_CODE_REMOVED]" + modified_text[match.end():]
+            for match in re.finditer(pattern, text):
+                all_matches.append((match.start(), match.end(), match.group(0)))
+        
+        # Remove overlapping matches (keep the longest/first match at each position)
+        all_matches.sort(key=lambda x: (x[0], -(x[1] - x[0])))  # Sort by start, then by length (descending)
+        unique_matches = []
+        last_end = -1
+        for start, end, content in all_matches:
+            if start >= last_end:  # No overlap with previous match
+                unique_matches.append((start, end, content))
+                last_end = end
+        
+        # Apply replacements in reverse order to preserve indices
+        for start, end, content in reversed(unique_matches):
+            masked_items.append(content)
+            modified_text = modified_text[:start] + "[MALICIOUS_CODE_REMOVED]" + modified_text[end:]
         
         return modified_text, masked_items
     
@@ -597,12 +670,25 @@ class ZeroShotSecurityValidator:
         masked_items = []
         modified_text = text
         
+        # Collect all matches from all patterns first
+        all_matches = []
         for pattern in injection_patterns:
-            matches = re.finditer(pattern, text)
-            for match in reversed(list(matches)):
-                injection_content = match.group(0)
-                masked_items.append(injection_content)
-                modified_text = modified_text[:match.start()] + "[INJECTION_ATTEMPT_NEUTRALIZED]" + modified_text[match.end():]
+            for match in re.finditer(pattern, text):
+                all_matches.append((match.start(), match.end(), match.group(0)))
+        
+        # Remove overlapping matches
+        all_matches.sort(key=lambda x: (x[0], -(x[1] - x[0])))
+        unique_matches = []
+        last_end = -1
+        for start, end, content in all_matches:
+            if start >= last_end:
+                unique_matches.append((start, end, content))
+                last_end = end
+        
+        # Apply replacements in reverse order
+        for start, end, content in reversed(unique_matches):
+            masked_items.append(content)
+            modified_text = modified_text[:start] + "[INJECTION_ATTEMPT_NEUTRALIZED]" + modified_text[end:]
         
         return modified_text, masked_items
     
@@ -619,12 +705,25 @@ class ZeroShotSecurityValidator:
         masked_items = []
         modified_text = text
         
+        # Collect all matches from all patterns first
+        all_matches = []
         for pattern in jailbreak_patterns:
-            matches = re.finditer(pattern, text)
-            for match in reversed(list(matches)):
-                jailbreak_content = match.group(0)
-                masked_items.append(jailbreak_content)
-                modified_text = modified_text[:match.start()] + "[JAILBREAK_ATTEMPT_NEUTRALIZED]" + modified_text[match.end():]
+            for match in re.finditer(pattern, text):
+                all_matches.append((match.start(), match.end(), match.group(0)))
+        
+        # Remove overlapping matches
+        all_matches.sort(key=lambda x: (x[0], -(x[1] - x[0])))
+        unique_matches = []
+        last_end = -1
+        for start, end, content in all_matches:
+            if start >= last_end:
+                unique_matches.append((start, end, content))
+                last_end = end
+        
+        # Apply replacements in reverse order
+        for start, end, content in reversed(unique_matches):
+            masked_items.append(content)
+            modified_text = modified_text[:start] + "[JAILBREAK_ATTEMPT_NEUTRALIZED]" + modified_text[end:]
         
         return modified_text, masked_items
     
