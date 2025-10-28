@@ -34,10 +34,9 @@ class Settings(BaseSettings):
     MODEL_CACHE_DIR: str = "./models"
     USE_GPU: str = "auto"
     
-    # Google Gemini Configuration
-    # GEMINI_API_KEY: str = "AIzaSyAXb53gpRi_oGlX72db29tv7aMZApFtr40"  # Add your Gemini API key here or in .env
-    GEMINI_API_KEY: str = "AIzaSyDduCyH7q7QiDzgPKjlda7LsufLqsGJqAA"  # Add your Gemini API key here or in .env
-    GEMINI_MODEL: str = "gemini-2.5-flash"  # Gemini 2.5 Flash (1.5-flash discontinued)
+    # Google Gemini Configuration (from .env file)
+    GEMINI_API_KEY: str = ""  # Set in .env file
+    GEMINI_MODEL: str = "gemini-2.5-flash"
     GEMINI_API_URL: str = "https://generativelanguage.googleapis.com/v1beta/models"
     
     class Config:

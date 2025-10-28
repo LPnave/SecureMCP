@@ -341,14 +341,22 @@ The system has **three security levels** with distinct behaviors:
 
 ### Changing Security Levels
 
-**Method 1: Environment Variable**
+**Method 1: UI Settings (NEW! ⭐)**
+
+Click the **⚙️ Settings** button in the top-right header:
+- Visual interface with color-coded levels
+- Real-time switching (no restart needed)
+- Instant feedback and error handling
+- See `SECURITY_LEVEL_UI_GUIDE.md` for full UI guide
+
+**Method 2: Environment Variable**
 
 In `python-backend/.env`:
 ```env
 DEFAULT_SECURITY_LEVEL=high
 ```
 
-**Method 2: API (Runtime)**
+**Method 3: API (Runtime)**
 
 ```bash
 curl -X PUT http://localhost:8003/api/security/level \
@@ -356,7 +364,7 @@ curl -X PUT http://localhost:8003/api/security/level \
   -d '{"level": "high"}'
 ```
 
-**Method 3: Per-Request**
+**Method 4: Per-Request**
 
 ```bash
 curl -X POST http://localhost:8003/api/sanitize \
@@ -484,6 +492,7 @@ def _sanitize_custom_pattern(self, text: str) -> Tuple[str, List[str]]:
 - **[python-backend/README.md](python-backend/README.md)** - Backend API reference
 - **[python-backend/test_sanitization.py](python-backend/test_sanitization.py)** - Test all sanitization patterns
 - **[python-backend/test_security_levels.py](python-backend/test_security_levels.py)** - Compare LOW/MEDIUM/HIGH behavior
+- **[SECURITY_LEVEL_UI_GUIDE.md](SECURITY_LEVEL_UI_GUIDE.md)** - UI settings guide for end users
 
 ---
 
@@ -527,6 +536,8 @@ def _sanitize_custom_pattern(self, text: str) -> Tuple[str, List[str]]:
 - [x] **Dynamic thresholds based on security level**
 - [x] **Block mode configuration per level**
 - [x] **Entropy-based detection adjusted per level**
+- [x] **UI Settings Dialog for changing security levels**
+- [x] **Real-time security level switching from frontend**
 - [x] Error handling improved (no [object Object])
 - [x] Sanitizer client utility created
 - [x] Environment configuration setup

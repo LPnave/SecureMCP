@@ -33,7 +33,7 @@ export async function POST(req: Request) {
       },
       body: JSON.stringify({
         messages: messages,
-        security_level: 'medium',
+        // Don't override security_level - use backend's global setting
         stream: true
       }),
     });

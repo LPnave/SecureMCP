@@ -215,8 +215,8 @@ const ComposerAction: FC = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          prompt: text,
-          security_level: 'medium'
+          prompt: text
+          // Don't override security_level - use backend's global setting
         }),
       });
 

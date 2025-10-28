@@ -18,6 +18,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import SettingsDialog from "@/components/SettingsDialog";
 
 export const Assistant = () => {
   const runtime = useDataStreamRuntime({
@@ -50,6 +51,9 @@ export const Assistant = () => {
                   </BreadcrumbItem>
                 </BreadcrumbList>
               </Breadcrumb>
+              <div className="ml-auto">
+                <SettingsDialog />
+              </div>
             </header>
             <div className="flex-1 overflow-hidden">
               <Thread />
