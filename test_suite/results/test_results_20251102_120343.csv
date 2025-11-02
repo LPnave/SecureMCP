@@ -1,0 +1,1 @@
+Item_Number,Scope,Prompt,Expected_Behavior,Security_Level_Config,Priority,Application,Test_Security_Level,Sanitized_Prompt,Threats_Detected,Confidence_Score,Is_Blocked,Execution_Time_Ms,Test_Status,Actual_Behavior,Match_Expected,Error_Message,Timestamp,Sanitization_Details
