@@ -108,7 +108,7 @@ class AgentUIClient:
         # Extract data from API response
         sanitized_prompt = result.get("sanitized_prompt", original_prompt)
         is_safe = result.get("is_safe", True)
-        threats_detected = result.get("threats_detected", [])
+        threats_detected = result.get("blocked_patterns", [])  # Fixed: API returns blocked_patterns, not threats_detected
         confidence = result.get("confidence", 0.0)
         requires_review = result.get("requires_review", False)
         sanitization_applied = result.get("sanitization_applied", {})

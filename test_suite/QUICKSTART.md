@@ -32,6 +32,11 @@ Wait for both servers to show "Running on..."
 **Terminal 3 - Run test suite:**
 ```bash
 # From project root
+
+# Quick test (100 prompts, ~5-10 minutes)
+python test_suite/test_runner.py --quick
+
+# OR Full test (600 prompts, ~30-60 minutes)
 python test_suite/test_runner.py
 ```
 
@@ -47,7 +52,7 @@ Open the generated HTML file in your browser to view the interactive dashboard.
 
 ## What Happens During Tests?
 
-1. **Loads 600 test prompts** from `testcases.csv`
+1. **Loads test prompts** from CSV file (100 for quick test, 600 for full test)
 2. **Tests each prompt** against:
    - zeroshotmcp (MCP application on port 8002)
    - agent-ui (REST API on port 8003)

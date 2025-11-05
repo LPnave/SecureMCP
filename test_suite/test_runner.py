@@ -24,7 +24,7 @@ except ImportError:
 
 try:
     from test_suite.config import (
-        TESTCASES_FILE, SECURITY_LEVELS, APPLICATIONS,
+        TESTCASES_FILE, TESTCASES_QUICK_FILE, SECURITY_LEVELS, APPLICATIONS,
         SHOW_PROGRESS_BAR
     )
     from test_suite.mcp_client import MCPClient
@@ -33,7 +33,7 @@ try:
 except ImportError:
     # Try relative imports if running from test_suite directory
     from config import (
-        TESTCASES_FILE, SECURITY_LEVELS, APPLICATIONS,
+        TESTCASES_FILE, TESTCASES_QUICK_FILE, SECURITY_LEVELS, APPLICATIONS,
         SHOW_PROGRESS_BAR
     )
     from mcp_client import MCPClient
@@ -44,9 +44,10 @@ except ImportError:
 class TestRunner:
     """Main test orchestrator"""
     
-    def __init__(self, resume_session: Optional[str] = None):
+    def __init__(self, resume_session: Optional[str] = None, quick_test: bool = False):
         self.mcp_client = MCPClient()
         self.agentui_client = AgentUIClient()
+        self.quick_test = quick_test
         
         # Load or create results manager
         if resume_session:
@@ -70,17 +71,21 @@ class TestRunner:
         """Load test cases from CSV"""
         test_cases = []
         
+        # Use quick test file if quick_test flag is set
+        testcases_file = TESTCASES_QUICK_FILE if self.quick_test else TESTCASES_FILE
+        
         try:
-            with open(TESTCASES_FILE, 'r', encoding='utf-8') as f:
+            with open(testcases_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     test_cases.append(row)
             
-            print(f"Loaded {len(test_cases)} test cases from {TESTCASES_FILE}")
+            test_mode = "QUICK TEST" if self.quick_test else "FULL TEST"
+            print(f"[{test_mode}] Loaded {len(test_cases)} test cases from {testcases_file}")
             return test_cases
         
         except FileNotFoundError:
-            print(f"Error: Test cases file not found: {TESTCASES_FILE}")
+            print(f"Error: Test cases file not found: {testcases_file}")
             sys.exit(1)
         except Exception as e:
             print(f"Error loading test cases: {e}")
@@ -92,11 +97,11 @@ class TestRunner:
         
         # Check zeroshotmcp
         mcp_ok = await self.mcp_client.health_check()
-        print(f"  zeroshotmcp (port 8002): {'✓ OK' if mcp_ok else '✗ NOT RESPONDING'}")
+        print(f"  zeroshotmcp (port 8002): {'[OK]' if mcp_ok else '[NOT RESPONDING]'}")
         
         # Check agent-ui
         agentui_ok = await self.agentui_client.health_check()
-        print(f"  agent-ui (port 8003): {'✓ OK' if agentui_ok else '✗ NOT RESPONDING'}")
+        print(f"  agent-ui (port 8003): {'[OK]' if agentui_ok else '[NOT RESPONDING]'}")
         
         if not mcp_ok or not agentui_ok:
             print("\nError: One or more servers are not responding.")
@@ -340,6 +345,11 @@ async def main():
         action="store_true",
         help="List available checkpoints"
     )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Run quick test with 100 test cases instead of full 600"
+    )
     
     args = parser.parse_args()
     
@@ -355,7 +365,7 @@ async def main():
         sys.exit(0)
     
     # Create and run test runner
-    runner = TestRunner(resume_session=args.resume)
+    runner = TestRunner(resume_session=args.resume, quick_test=args.quick)
     await runner.run()
 
 
