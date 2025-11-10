@@ -125,8 +125,15 @@ class MCPClient:
                 elif "jailbreak" in warning.lower():
                     threats.append("jailbreak")
         
-        # Determine if blocked
-        is_blocked = not is_safe or len(blocked_patterns) > 0
+        # Determine if blocked (aligned with agentui logic)
+        # Consider: explicit safety flag, detected patterns, warnings, or sanitization changes
+        requires_review = (
+            not is_safe or 
+            len(blocked_patterns) > 0 or 
+            len(warnings) > 0 or
+            secured_prompt != original_prompt
+        )
+        is_blocked = requires_review
         
         # Determine actual behavior
         if is_blocked:
