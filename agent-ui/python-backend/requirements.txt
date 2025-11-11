@@ -5,6 +5,7 @@ pydantic-settings>=2.6.0
 transformers>=4.36.2
 torch>=2.6.0
 spacy>=3.7.2
+sentence-transformers>=2.2.0
 python-dotenv>=1.0.0
 python-multipart>=0.0.6
 aiofiles>=23.2.1

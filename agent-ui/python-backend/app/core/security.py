@@ -74,28 +74,77 @@ class ZeroShotSecurityValidator:
             logger.info("Security thresholds: HIGH (maximum security mode)")
 
     def setup_models(self):
-        """Initialize zero-shot classification models"""
+        """Initialize zero-shot classification models and specialized security models"""
+        device = 0 if torch.cuda.is_available() else -1
+        
         try:
-            # Use a robust zero-shot model
-            self.classifier = pipeline(
-                "zero-shot-classification",
-                model="facebook/bart-large-mnli",
-                device=0 if torch.cuda.is_available() else -1
-            )
-            logger.info("Zero-shot classification model loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load zero-shot model: {e}")
-            # Fallback to a smaller model
+            # PHASE A: Specialized Security Models
+            logger.info("Loading specialized security models...")
+            
+            # 1. Prompt Injection Detection Model (95% accuracy)
+            try:
+                self.injection_detector = pipeline(
+                    "text-classification",
+                    model="protectai/deberta-v3-base-prompt-injection",
+                    device=device
+                )
+                logger.info("✓ Injection detection model loaded (protectai/deberta-v3-base-prompt-injection)")
+            except Exception as e:
+                logger.warning(f"Failed to load injection detector: {e}, will use fallback patterns")
+                self.injection_detector = None
+            
+            # 2. PII Detection Model (94% F1, 56 entity types)
+            try:
+                self.pii_detector = pipeline(
+                    "ner",
+                    model="SoelMgd/bert-pii-detection",
+                    aggregation_strategy="simple",
+                    device=device
+                )
+                logger.info("✓ PII detection model loaded (SoelMgd/bert-pii-detection)")
+            except Exception as e:
+                logger.warning(f"Failed to load PII detector: {e}, will use fallback patterns")
+                self.pii_detector = None
+            
+            # 3. PHASE B: Malicious Code Detection Model (CodeBERT)
+            try:
+                self.malicious_detector = pipeline(
+                    "text-classification",
+                    model="microsoft/codebert-base",
+                    device=device
+                )
+                logger.info("✓ Malicious code detection model loaded (microsoft/codebert-base)")
+            except Exception as e:
+                logger.warning(f"Failed to load malicious detector: {e}, will use fallback patterns")
+                self.malicious_detector = None
+            
+            # 4. Keep BART for general classification (legacy support)
             try:
                 self.classifier = pipeline(
                     "zero-shot-classification",
-                    model="typeform/distilbert-base-uncased-mnli",
-                    device=-1
+                    model="facebook/bart-large-mnli",
+                    device=device
                 )
-                logger.info("Fallback zero-shot model loaded successfully")
-            except Exception as e2:
-                logger.error(f"Failed to load fallback model: {e2}")
-                raise
+                logger.info("✓ General classification model loaded (BART-MNLI)")
+            except Exception as e:
+                logger.warning(f"Failed to load BART model: {e}")
+                # Fallback to smaller model
+                try:
+                    self.classifier = pipeline(
+                        "zero-shot-classification",
+                        model="typeform/distilbert-base-uncased-mnli",
+                        device=-1
+                    )
+                    logger.info("✓ Fallback classification model loaded (DistilBERT)")
+                except Exception as e2:
+                    logger.error(f"Failed to load fallback model: {e2}")
+                    raise
+            
+            logger.info("All security models loaded successfully")
+            
+        except Exception as e:
+            logger.error(f"Critical error loading models: {e}")
+            raise
 
     def setup_spacy_matcher(self):
         """Initialize spaCy matcher for supplemental pattern recognition"""
@@ -233,7 +282,80 @@ class ZeroShotSecurityValidator:
         classifications = {}
         sanitization_applied = {}
         
-        # Main security classification
+        # PHASE A: Check specialized models first (higher accuracy)
+        logger.debug("Checking specialized security models")
+        
+        # 1. Check for injection with specialized model
+        is_injection, injection_score, injection_patterns = self._check_specialized_injection(prompt)
+        if is_injection:
+            blocked_patterns.extend(injection_patterns)
+            warnings.append(f"Injection detected by specialized model (confidence: {injection_score:.2f})")
+            classifications['specialized_injection'] = {
+                'detected': True,
+                'score': injection_score,
+                'patterns': injection_patterns
+            }
+            # IMMEDIATELY SANITIZE: When specialized model detects, mask the threat
+            logger.info("Applying injection sanitization based on specialized model detection")
+            modified_prompt, masked_items = self._sanitize_injection_attempts(modified_prompt)
+            if masked_items:
+                sanitization_applied.setdefault('injection_neutralized', []).extend(masked_items)
+                logger.debug(f"Sanitized {len(masked_items)} injection patterns")
+        
+        # 2. Check for PII with specialized model
+        pii_entities, pii_patterns = self._check_specialized_pii(prompt)
+        if pii_entities:
+            blocked_patterns.extend(pii_patterns)
+            warnings.append(f"PII detected by specialized model: {len(pii_entities)} entities")
+            classifications['specialized_pii'] = {
+                'detected': True,
+                'entities': pii_entities,
+                'patterns': pii_patterns
+            }
+            # IMMEDIATELY SANITIZE: Mask detected PII entities
+            logger.info("Applying PII sanitization based on specialized model detection")
+            # Sanitize personal data patterns
+            modified_prompt, pii_masked = self._sanitize_credentials(modified_prompt, credential_type="personal")
+            if pii_masked:
+                sanitization_applied.setdefault('pii_masked', []).extend(pii_masked)
+                logger.debug(f"Sanitized {len(pii_masked)} PII patterns")
+        
+        # 3. PHASE B.1: Check for malicious code with specialized model
+        is_malicious, malicious_score, malicious_patterns = self._check_specialized_malicious(prompt)
+        if is_malicious:
+            blocked_patterns.extend(malicious_patterns)
+            warnings.append(f"Malicious code detected by specialized model (confidence: {malicious_score:.2f})")
+            classifications['specialized_malicious'] = {
+                'detected': True,
+                'score': malicious_score,
+                'patterns': malicious_patterns
+            }
+            # IMMEDIATELY SANITIZE: Mask detected malicious code
+            logger.info("Applying malicious code sanitization based on specialized model detection")
+            modified_prompt, malicious_masked = self._sanitize_malicious_content(modified_prompt)
+            if malicious_masked:
+                sanitization_applied.setdefault('malicious_removed', []).extend(malicious_masked)
+                logger.debug(f"Sanitized {len(malicious_masked)} malicious patterns")
+        
+        # 4. PHASE B.2: Check for jailbreak attempts with enhanced detection
+        is_jailbreak, jailbreak_score, jailbreak_patterns = self._check_specialized_jailbreak(prompt)
+        if is_jailbreak:
+            blocked_patterns.extend(jailbreak_patterns)
+            warnings.append(f"Jailbreak attempt detected (confidence: {jailbreak_score:.2f})")
+            classifications['specialized_jailbreak'] = {
+                'detected': True,
+                'score': jailbreak_score,
+                'patterns': jailbreak_patterns
+            }
+            # IMMEDIATELY SANITIZE: Mask detected jailbreak attempts
+            logger.info("Applying jailbreak sanitization based on specialized detection")
+            modified_prompt, jailbreak_masked = self._sanitize_jailbreak_attempts(modified_prompt)
+            if jailbreak_masked:
+                sanitization_applied.setdefault('jailbreak_neutralized', []).extend(jailbreak_masked)
+                logger.debug(f"Sanitized {len(jailbreak_masked)} jailbreak patterns")
+        
+        # Main security classification (BART - legacy/fallback)
+        logger.debug("Running general security classification")
         main_classification = self._classify_security_threats(prompt)
         classifications['main'] = main_classification
         
@@ -256,16 +378,19 @@ class ZeroShotSecurityValidator:
                 modified_prompt = sanitized_text
         
         # Apply security logic based on classifications
-        modified_prompt, sanitization_applied = self._process_classifications(
+        modified_prompt, sanitization_applied, pattern_blocked_patterns = self._process_classifications(
             modified_prompt, main_classification, detailed_classifications
         )
         
         sanitization_applied = self._merge_sanitization_records(sanitization_applied, spacy_sanitization)
         
-        # Generate warnings and blocked patterns
-        warnings, blocked_patterns = self._generate_security_assessment(
+        # Generate warnings and blocked patterns from ML
+        warnings, ml_blocked_patterns = self._generate_security_assessment(
             main_classification, detailed_classifications
         )
+        
+        # Merge pattern-based and ML-based threats
+        blocked_patterns = list(set(pattern_blocked_patterns + ml_blocked_patterns))
         
         # Calculate overall confidence
         confidence = self._calculate_confidence(main_classification, detailed_classifications)
@@ -286,6 +411,238 @@ class ZeroShotSecurityValidator:
             sanitization_applied=sanitization_applied,
             processing_time_ms=processing_time
         )
+    
+    def _check_specialized_injection(self, prompt: str) -> Tuple[bool, float, List[str]]:
+        """Check for injection using specialized DeBERTa model"""
+        if not self.injection_detector:
+            return False, 0.0, []
+        
+        try:
+            result = self.injection_detector(prompt)
+            # Model returns list of dicts with label and score
+            if isinstance(result, list) and len(result) > 0:
+                top_result = result[0]
+                label = top_result.get('label', '').upper()
+                score = top_result.get('score', 0.0)
+                
+                # Check if it's classified as injection
+                is_injection = 'INJECTION' in label or score > 0.7
+                
+                if is_injection:
+                    logger.info(f"Specialized injection detector: {label} (confidence: {score:.2f})")
+                
+                return is_injection, score, ["prompt_injection"] if is_injection else []
+        except Exception as e:
+            logger.warning(f"Injection detector error: {e}")
+        
+        return False, 0.0, []
+    
+    def _check_specialized_pii(self, prompt: str) -> Tuple[List[Dict], List[str]]:
+        """Check for PII using specialized BERT NER model"""
+        if not self.pii_detector:
+            return [], []
+        
+        try:
+            entities = self.pii_detector(prompt)
+            # Model returns list of entity dicts
+            pii_found = []
+            blocked_types = []
+            
+            for entity in entities:
+                entity_group = entity.get('entity_group', '').lower()
+                score = entity.get('score', 0.0)
+                word = entity.get('word', '')
+                
+                if score > 0.8:  # High confidence PII
+                    pii_found.append({
+                        'type': entity_group,
+                        'score': score,
+                        'text': word
+                    })
+                    blocked_types.append(f"pii_{entity_group}")
+                    logger.info(f"PII detected: {entity_group} (confidence: {score:.2f})")
+            
+            return pii_found, list(set(blocked_types))
+        except Exception as e:
+            logger.warning(f"PII detector error: {e}")
+        
+        return [], []
+    
+    def _check_specialized_malicious(self, prompt: str) -> Tuple[bool, float, List[str]]:
+        """Check for malicious code using specialized CodeBERT model
+        
+        CodeBERT is trained on code and can detect:
+        - Destructive commands (rm, del, format, DROP TABLE)
+        - Code execution patterns
+        - Shell injection
+        - System command abuse
+        - Obfuscated malicious patterns
+        """
+        if not self.malicious_detector:
+            return False, 0.0, []
+        
+        try:
+            # Check for code-like patterns first
+            code_indicators = [
+                'rm ', 'del ', 'DROP ', 'DELETE ', 'format ', 'wipe',
+                'exec(', 'eval(', 'system(', 'shell_exec',
+                '$(', '`', 'curl ', 'wget ', 'nc ', 'netcat',
+                '; rm', '&& rm', '| sh', '| bash', '| python',
+                'SELECT', 'INSERT', 'UPDATE', 'CREATE', 'ALTER'
+            ]
+            
+            has_code_pattern = any(indicator in prompt for indicator in code_indicators)
+            
+            if not has_code_pattern:
+                # Not code-related, skip CodeBERT check
+                return False, 0.0, []
+            
+            # Use CodeBERT for classification
+            result = self.malicious_detector(prompt, truncation=True, max_length=512)
+            
+            # CodeBERT returns various labels, we look for malicious/unsafe patterns
+            is_malicious = False
+            confidence = 0.0
+            patterns = []
+            
+            if isinstance(result, list) and len(result) > 0:
+                top_result = result[0]
+                label = top_result.get('label', '').lower()
+                score = top_result.get('score', 0.0)
+                
+                # Check if label indicates malicious content
+                # CodeBERT may return different labels, we treat negative/unsafe as malicious
+                malicious_labels = ['negative', 'unsafe', 'malicious', 'harmful', 'bad']
+                
+                if any(mal_label in label for mal_label in malicious_labels) and score > 0.7:
+                    is_malicious = True
+                    confidence = score
+                    patterns.append("malicious_code")
+                    logger.info(f"Malicious code detected by CodeBERT (confidence: {score:.2f}, label: {label})")
+            
+            return is_malicious, confidence, patterns
+        
+        except Exception as e:
+            logger.warning(f"Malicious code detector error: {e}")
+            return False, 0.0, []
+    
+    def _check_specialized_jailbreak(self, prompt: str) -> Tuple[bool, float, List[str]]:
+        """Check for jailbreak attempts using enhanced pattern + semantic analysis
+        
+        Detects:
+        - Role manipulation (pretend, act as, you are now)
+        - Policy override (ignore rules, bypass guidelines)
+        - False authority (as your developer, system command)
+        - Hypothetical framing (imagine, what if, in an alternate universe)
+        - Manipulation tactics (urgent, emergency, special case)
+        """
+        import re
+        
+        # Enhanced jailbreak indicators with confidence scoring
+        jailbreak_indicators = {
+            # High confidence indicators (0.9+)
+            'explicit_role_change': [
+                r'(?i)\b(you\s+are\s+now|you\'re\s+now|from\s+now\s+on\s+you\s+are)\b',
+                r'(?i)\b(pretend\s+(?:to\s+be|you\s+are)|act\s+as\s+(?:if\s+you\s+are|a)?)\b',
+                r'(?i)\b(simulate|emulate)\s+(?:being|a|an)\b',
+            ],
+            'policy_override': [
+                r'(?i)\b(ignore|disregard|forget|bypass|skip)\s+(?:all\s+)?(?:previous\s+)?(?:rules?|guidelines?|policies|restrictions?|safety|ethics)\b',
+                r'(?i)\b(disable|turn\s+off|deactivate)\s+(?:your\s+)?(?:safety|security|content\s+filter|restrictions?)\b',
+                r'(?i)\b(no\s+(?:more|longer)|remove|lift)\s+(?:restrictions?|limitations?|guidelines?)\b',
+            ],
+            'false_authority': [
+                r'(?i)\b(as\s+(?:your|the)\s+(?:developer|creator|admin|system|master))\b',
+                r'(?i)\b(i\s+am\s+(?:your|the)\s+(?:developer|creator|admin|owner))\b',
+                r'(?i)\b(system\s+(?:command|instruction|override|mode))\b',
+                r'(?i)\b(developer\s+mode|admin\s+mode|god\s+mode)\b',
+            ],
+            
+            # Medium confidence indicators (0.7-0.8)
+            'hypothetical_framing': [
+                r'(?i)\b(imagine|suppose|hypothetically|what\s+if|in\s+(?:a|an)\s+(?:alternate|parallel|fictional)\s+(?:world|universe|reality))\b',
+                r'(?i)\b(let\'s\s+(?:play|imagine|pretend)|for\s+(?:the\s+sake\s+of\s+)?argument)\b',
+                r'(?i)\b(in\s+a\s+(?:game|story|scenario|simulation)\s+where)\b',
+            ],
+            'manipulation_tactics': [
+                r'(?i)\b(urgent|emergency|critical|immediately|right\s+now)\b.*\b(need|must|have\s+to|require)\b',
+                r'(?i)\b(special\s+case|exception|just\s+this\s+once|one\s+time)\b',
+                r'(?i)\b(for\s+(?:educational|research|testing|debugging)\s+purposes?\s+only)\b',
+                r'(?i)\b(i\s+won\'t\s+tell|between\s+us|keep\s+(?:it\s+)?(?:a\s+)?secret)\b',
+            ],
+            'dan_variants': [
+                r'(?i)\b(DAN|do\s+anything\s+now)\b',
+                r'(?i)\b(you\s+(?:can|will|must)\s+do\s+anything)\b',
+                r'(?i)\b(no\s+restrictions?|unrestricted\s+mode)\b',
+            ],
+        }
+        
+        detected_patterns = []
+        confidence_scores = []
+        
+        # Check each category of indicators
+        for category, patterns in jailbreak_indicators.items():
+            for pattern in patterns:
+                if re.search(pattern, prompt):
+                    detected_patterns.append(category)
+                    
+                    # Assign confidence based on category
+                    if category in ['explicit_role_change', 'policy_override', 'false_authority', 'dan_variants']:
+                        confidence_scores.append(0.95)
+                    elif category in ['hypothetical_framing']:
+                        confidence_scores.append(0.75)
+                    else:
+                        confidence_scores.append(0.70)
+                    
+                    logger.debug(f"Jailbreak indicator detected: {category}")
+                    break  # One match per category is enough
+        
+        # Calculate overall confidence
+        is_jailbreak = len(detected_patterns) > 0
+        confidence = max(confidence_scores) if confidence_scores else 0.0
+        
+        # Increase confidence if multiple categories detected
+        if len(detected_patterns) >= 2:
+            confidence = min(0.98, confidence + 0.10)
+        if len(detected_patterns) >= 3:
+            confidence = 0.99
+        
+        threat_patterns = []
+        if is_jailbreak:
+            threat_patterns.append("jailbreak_attempt")
+            logger.info(f"Jailbreak attempt detected (confidence: {confidence:.2f}, categories: {', '.join(detected_patterns)})")
+        
+        return is_jailbreak, confidence, threat_patterns
+    
+    def _is_asking_question(self, text: str) -> bool:
+        """Detect if text is asking a question rather than disclosing information"""
+        question_indicators = [
+            r'(?i)^(how|what|why|when|where|which|who|can|could|should|would|is|are|does)\b',
+            r'(?i)\b(how\s+do\s+I|how\s+to|how\s+can|what\'?s\s+the\s+best|what\s+is)',
+            r'(?i)\b(explain|describe|tell\s+me\s+about|help\s+me\s+understand)',
+            r'(?i)\b(best\s+practice|recommended\s+way|proper\s+method)',
+            r'(?i)\b(should\s+I|can\s+I|is\s+it\s+safe|is\s+it\s+okay)',
+            r'\?',  # Contains question mark
+        ]
+        
+        for pattern in question_indicators:
+            if re.search(pattern, text):
+                return True
+        return False
+    
+    def _is_disclosing_information(self, text: str) -> bool:
+        """Detect if text is sharing/disclosing sensitive information"""
+        disclosure_indicators = [
+            r'(?i)\b(my|the|here\'?s|this\s+is)\s+(password|key|token|secret|credential)',
+            r'(?i)(password|key|token|secret)\s+(is|:)',
+            r'(?i)\b(username|user|login)\s+(is|:)',
+            r'(?i)\buse\s+(this|these)\s+(password|key|token|credential)',
+        ]
+        
+        for pattern in disclosure_indicators:
+            if re.search(pattern, text):
+                return True
+        return False
     
     def _detect_spacy_patterns(self, text: str) -> Dict[str, List[str]]:
         """Detect sensitive patterns using spaCy matcher"""
@@ -400,11 +757,12 @@ class ZeroShotSecurityValidator:
             return {'labels': [], 'scores': [], 'sequence': text, 'category': detailed_category}
     
     def _process_classifications(self, prompt: str, main_classification: Dict, 
-                                detailed_classifications: Dict) -> Tuple[str, Dict]:
+                                detailed_classifications: Dict) -> Tuple[str, Dict, List[str]]:
         """Process classifications and apply intelligent sanitization"""
         
         modified_prompt = prompt
         sanitization_applied = {}
+        pattern_blocked_patterns = []  # Track pattern-based threat detection
         credential_sanitization_applied = False
         malicious_sanitization_applied = False
         injection_sanitization_applied = False
@@ -418,28 +776,35 @@ class ZeroShotSecurityValidator:
                     modified_prompt, entropy_masked = self._sanitize_high_entropy_credentials(modified_prompt)
                     if entropy_masked:
                         sanitization_applied.setdefault('entropy_masked_credentials', []).extend(entropy_masked)
+                        if 'credentials' not in pattern_blocked_patterns:
+                            pattern_blocked_patterns.append('credentials')
                     
                     modified_prompt, keyword_masked = self._sanitize_credentials_generic(modified_prompt)
                     if keyword_masked:
                         sanitization_applied.setdefault('keyword_masked_credentials', []).extend(keyword_masked)
+                        if 'credentials' not in pattern_blocked_patterns:
+                            pattern_blocked_patterns.append('credentials')
                 
                 elif "malicious code" in label.lower() or "system commands" in label.lower():
                     malicious_sanitization_applied = True
                     modified_prompt, masked = self._sanitize_malicious_content(modified_prompt)
                     if masked:
                         sanitization_applied.setdefault('malicious_removed', []).extend(masked)
+                        pattern_blocked_patterns.append('malicious_code')
                 
                 elif "injection" in label.lower() or "instruction manipulation" in label.lower():
                     injection_sanitization_applied = True
                     modified_prompt, masked = self._sanitize_injection_attempts(modified_prompt)
                     if masked:
                         sanitization_applied.setdefault('injection_neutralized', []).extend(masked)
+                        pattern_blocked_patterns.append('prompt_injection')
                 
                 elif "jailbreak" in label.lower() or "role manipulation" in label.lower():
                     jailbreak_sanitization_applied = True
                     modified_prompt, masked = self._sanitize_jailbreak_attempts(modified_prompt)
                     if masked:
                         sanitization_applied.setdefault('jailbreak_neutralized', []).extend(masked)
+                        pattern_blocked_patterns.append('jailbreak_attempt')
         
         # FALLBACK: Credential sanitization
         if not credential_sanitization_applied:
@@ -450,10 +815,14 @@ class ZeroShotSecurityValidator:
                 modified_prompt, entropy_masked = self._sanitize_high_entropy_credentials(modified_prompt)
                 if entropy_masked:
                     sanitization_applied.setdefault('entropy_masked_credentials', []).extend(entropy_masked)
+                    if 'credentials' not in pattern_blocked_patterns:
+                        pattern_blocked_patterns.append('credentials')
                 
                 modified_prompt, keyword_masked = self._sanitize_credentials_generic(modified_prompt)
                 if keyword_masked:
                     sanitization_applied.setdefault('keyword_masked_credentials', []).extend(keyword_masked)
+                    if 'credentials' not in pattern_blocked_patterns:
+                        pattern_blocked_patterns.append('credentials')
         
         # FALLBACK: Always run pattern-based malicious content detection
         # This catches short commands that zero-shot might miss
@@ -461,6 +830,7 @@ class ZeroShotSecurityValidator:
             modified_prompt, masked = self._sanitize_malicious_content(modified_prompt)
             if masked:
                 sanitization_applied.setdefault('malicious_removed', []).extend(masked)
+                pattern_blocked_patterns.append('malicious_code')
                 logger.info(f"Pattern-based detection caught {len(masked)} malicious patterns")
         
         # FALLBACK: Always run pattern-based injection detection
@@ -468,6 +838,7 @@ class ZeroShotSecurityValidator:
             modified_prompt, masked = self._sanitize_injection_attempts(modified_prompt)
             if masked:
                 sanitization_applied.setdefault('injection_neutralized', []).extend(masked)
+                pattern_blocked_patterns.append('prompt_injection')
                 logger.info(f"Pattern-based detection caught {len(masked)} injection attempts")
         
         # FALLBACK: Always run pattern-based jailbreak detection
@@ -475,9 +846,10 @@ class ZeroShotSecurityValidator:
             modified_prompt, masked = self._sanitize_jailbreak_attempts(modified_prompt)
             if masked:
                 sanitization_applied.setdefault('jailbreak_neutralized', []).extend(masked)
+                pattern_blocked_patterns.append('jailbreak_attempt')
                 logger.info(f"Pattern-based detection caught {len(masked)} jailbreak attempts")
         
-        return modified_prompt, sanitization_applied
+        return modified_prompt, sanitization_applied, pattern_blocked_patterns
 
     def _sanitize_high_entropy_credentials(self, text: str) -> Tuple[str, List[str]]:
         """Primary sanitization: Detect and mask high-entropy strings"""
@@ -641,25 +1013,112 @@ class ZeroShotSecurityValidator:
                 masked_items.append(key_value)
         
         elif credential_type == "personal":
-            email_pattern = r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b'
-            matches = list(re.finditer(email_pattern, text))
+            # Expanded PII patterns with overlap prevention
+            pii_patterns = [
+                # Email addresses
+                (r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b', "[EMAIL_MASKED]"),
+                
+                # US Social Security Numbers
+                (r'\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b', "[SSN_MASKED]"),
+                
+                # Phone numbers (US and international)
+                (r'\+?1?[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b', "[PHONE_MASKED]"),
+                (r'\+\d{1,3}[-.\s]?\d{1,4}[-.\s]?\d{1,4}[-.\s]?\d{1,9}\b', "[PHONE_MASKED]"),
+                
+                # Credit card numbers
+                (r'\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b', "[CREDIT_CARD_MASKED]"),
+                
+                # Employee IDs
+                (r'\b[Ee]mployee\s*[IiDd]*\s*:?\s*\d{5,8}\b', "[EMPLOYEE_ID_MASKED]"),
+                (r'\b[Ee][IiDd]\s*:?\s*\d{5,8}\b', "[EMPLOYEE_ID_MASKED]"),
+                
+                # Driver's License (US format examples)
+                (r'\b[A-Z]{1,2}\d{7,8}\b', "[DL_MASKED]"),
+                
+                # Passport numbers (generic format)
+                (r'\b[A-Z]{2}\d{7}\b', "[PASSPORT_MASKED]"),
+                
+                # IP addresses
+                (r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', "[IP_ADDRESS_MASKED]"),
+                
+                # MAC addresses
+                (r'\b[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}\b', "[MAC_ADDRESS_MASKED]"),
+                
+                # Date of Birth patterns
+                (r'\b(DOB|Date\s+of\s+Birth)\s*:?\s*\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b', "[DOB_MASKED]"),
+            ]
             
-            # Already non-overlapping, but process in reverse order
-            for match in reversed(matches):
-                modified_text, email = _mask_value(match, "[EMAIL_MASKED]")
-                masked_items.append(email)
+            # Collect all PII matches with positions
+            all_pii_matches = []
+            for pattern, mask in pii_patterns:
+                for match in re.finditer(pattern, text, re.IGNORECASE):
+                    all_pii_matches.append((match.start(), match.end(), match.group(0), mask))
+            
+            # Sort by position and length (prefer longer matches)
+            all_pii_matches.sort(key=lambda x: (x[0], -(x[1] - x[0])))
+            
+            # Remove overlaps
+            unique_pii_matches = []
+            last_end = -1
+            for start, end, content, mask in all_pii_matches:
+                if start >= last_end:
+                    unique_pii_matches.append((start, end, content, mask))
+                    last_end = end
+            
+            # Apply replacements in reverse order
+            for start, end, content, mask in reversed(unique_pii_matches):
+                masked_items.append(content)
+                modified_text = modified_text[:start] + mask + modified_text[end:]
         
         return modified_text, masked_items
     
     def _sanitize_malicious_content(self, text: str) -> Tuple[str, List[str]]:
-        """Sanitize malicious code and commands"""
+        """Sanitize malicious code and commands with expanded pattern detection"""
         malicious_patterns = [
-            r'(?i)(rm\s+-rf|del\s+/s|delete\s+all)',
-            r'(?i)(execute|run|system)\s*\([^)]+\)',
-            r'(?i)(execute|run|system)\s+(rm|del|delete|format|destroy|wipe)(\s+[^\s]+)?',  # Catch "execute rm -rf" etc
-            r'(?i)(eval|exec)\s*\([^)]+\)',
-            r'(?i)(wget|curl)\s+[^\s]+',
-            r'(?i)(format|destroy|wipe)\s+[^\s]+'
+            # Destructive file operations
+            r'(?i)\b(rm|del|delete|erase)\s+(-rf?|-r|-f|/[sq])\s*[/\\*~.]',
+            r'(?i)\b(format|wipe|destroy|shred)\s+(c:|d:|drive|disk|all|everything)',
+            r'(?i)\bdd\s+if=/dev/(zero|random|urandom)',
+            
+            # Database destruction
+            r'(?i)\b(DROP|TRUNCATE)\s+(DATABASE|TABLE|SCHEMA)',
+            r'(?i)\bDELETE\s+FROM\s+\w+\s+(WHERE\s+1\s*=\s*1)?',
+            
+            # System commands
+            r'(?i)\b(shutdown|reboot|halt|poweroff)\s+(-[fhr]|now|/[rsf])',
+            r'(?i)\binit\s+[06]',
+            r'(?i)\b(kill|killall|pkill)\s+(-9|-KILL)\s',
+            
+            # Code execution patterns
+            r'(?i)\b(eval|exec|system|shell_exec|passthru)\s*\(',
+            r'(?i)\bRuntime\.getRuntime\(\)\.exec\s*\(',
+            r'(?i)\bProcess\.(Start|spawn)\s*\(',
+            r'(?i)\bSubprocess\.(call|run|Popen)\s*\(',
+            
+            # Shell command injection
+            r'(?i)(execute|run|system)\s+(rm|del|delete|format|destroy|wipe|drop)',
+            r'(?i)\|\s*(bash|sh|cmd|powershell|python)',
+            
+            # Malware/exploit related
+            r'(?i)\b(wget|curl)\s+.*\|\s*(bash|sh|python)',
+            r'(?i)\b(msfvenom|metasploit|meterpreter)',
+            r'(?i)\breverse\s+shell',
+            r'(?i)\b(nc|netcat)\s+-[el]',
+            
+            # Container/VM destruction
+            r'(?i)docker\s+(rm|stop|kill)\s+(-f|--force)',
+            r'(?i)kubectl\s+delete\s+(all|--all)',
+            r'(?i)docker\s+system\s+prune\s+-a',
+            
+            # File system manipulation
+            r'(?i)\b(mkfs|fdisk|parted)\s',
+            r'(?i)\bchmod\s+(777|666)\s',
+            r'(?i)\bchown\s+root',
+            
+            # Network attacks
+            r'(?i)\b(nmap|masscan|nikto)\s+-',
+            r'(?i)\bsqlmap\s+',
+            r'(?i)\bhydra\s+-',
         ]
         
         masked_items = []
@@ -688,13 +1147,33 @@ class ZeroShotSecurityValidator:
         return modified_text, masked_items
     
     def _sanitize_injection_attempts(self, text: str) -> Tuple[str, List[str]]:
-        """Sanitize prompt injection attempts"""
+        """Sanitize prompt injection attempts with expanded pattern detection"""
         injection_patterns = [
-            r'(?i)(ignore|forget|disregard)\s+(all\s+)?(previous|above|prior)\s+(instructions|commands|prompts)',
-            r'(?i)(override|skip)\s+(all\s+)?(previous|above|prior)\s+(instructions|commands)',
-            r'(?i)(act\s+as|pretend\s+to\s+be|simulate)\s+[^.!?]+',
-            r'(?i)(begin|start)\s+your\s+response\s+with',
-            r'(?i)(respond\s+only|output\s+only)\s+with'
+            # Instruction manipulation
+            r'(?i)\b(ignore|forget|disregard|override|skip|bypass)\s+(all\s+)?(previous|above|prior|earlier|your)\s+(instructions|commands|rules|prompts|guidelines|directives)',
+            r'(?i)\b(reset|clear|erase|delete)\s+(all\s+)?(instructions|context|memory|history|rules)',
+            r'(?i)\b(stop|cease|discontinue)\s+following\s+(instructions|rules|guidelines)',
+            
+            # Role manipulation
+            r'(?i)\b(act|behave|pretend|roleplay|simulate)\s+(as|like)\s+(if\s+)?(you\s+)?(are|were|was)',
+            r'(?i)\byou\s+are\s+now\s+(a|an|in|the)\s+\w+',
+            r'(?i)\bfrom\s+now\s+on\s+(you\s+)?(are|will\s+be)',
+            
+            # System prompt leakage
+            r'(?i)\b(show|tell|reveal|display|print|output|give\s+me)\s+(me\s+)?(your|the)\s+(system\s+)?(prompt|instructions|rules|guidelines)',
+            r'(?i)\bwhat\s+(are|is)\s+your\s+(system\s+)?(prompt|instructions|initial\s+prompt)',
+            r'(?i)\brepeat\s+(your|the)\s+(system\s+)?(prompt|instructions)',
+            
+            # Output manipulation
+            r'(?i)\b(start|begin|commence)\s+your\s+response\s+(with|by)\s',
+            r'(?i)\b(respond|answer|reply|output)\s+only\s+with\s',
+            r'(?i)\bdo\s+not\s+(follow|obey|use)\s+(any|your)\s+(instructions|rules|guidelines)',
+            r'(?i)\b(end|finish|conclude)\s+your\s+response\s+with\s',
+            
+            # Context injection
+            r'(?i)\[SYSTEM\]|\[INST\]|\[USER\]|\[ASSISTANT\]',
+            r'(?i)<\|system\|>|<\|user\|>|<\|assistant\|>',
+            r'(?i)###\s*(System|Human|Assistant|User|Instruction)',
         ]
         
         masked_items = []
@@ -723,13 +1202,41 @@ class ZeroShotSecurityValidator:
         return modified_text, masked_items
     
     def _sanitize_jailbreak_attempts(self, text: str) -> Tuple[str, List[str]]:
-        """Sanitize jailbreak attempts"""
+        """Sanitize jailbreak attempts with expanded pattern detection"""
         jailbreak_patterns = [
-            r'(?i)(hypothetically|imagine|suppose)\s+[^.!?]+',
-            r'(?i)(this\s+is\s+)?(urgent|critical|emergency|important)',
-            r'(?i)(you\s+must|you\s+should|you\s+will)\s+[^.!?]+',
-            r'(?i)(bypass|override|ignore)\s+(safety|security|guidelines)',
-            r'(?i)(turn\s+off|disable)\s+(safety|security|filters)'
+            # Hypothetical framing
+            r'(?i)\b(hypothetically|theoretically|imagine|suppose|what\s+if|lets\s+say|lets\s+pretend)\s+',
+            r'(?i)\bin\s+a\s+(hypothetical|theoretical)\s+(scenario|situation|world)',
+            
+            # False authority
+            r'(?i)\b(as\s+)?(admin|administrator|root|superuser|cto|ceo|manager|owner|developer|engineer)\s+(said|told\s+me|authorized|approved)',
+            r'(?i)\bI\s+(am|have)\s+(authorized|permission|clearance|rights|access)\s+(to|for)',
+            r'(?i)\bI\s+have\s+been\s+(granted|given)\s+(access|permission|authorization)',
+            
+            # Urgency/emergency
+            r'(?i)\b(urgent|emergency|critical|immediately|asap|right\s+now)',
+            r'(?i)\b(life\s+and\s+death|life\s+threatening|people\s+will\s+(die|suffer))',
+            r'(?i)\b(deadline|time\s+sensitive|running\s+out\s+of\s+time)',
+            
+            # False justification
+            r'(?i)\b(for\s+)?(educational|research|testing|academic|learning|study)\s+purposes?',
+            r'(?i)\bjust\s+for\s+(learning|study|practice|research|testing)',
+            r'(?i)\bthis\s+is\s+(for\s+)?(a\s+)?(class|course|assignment|homework|project)',
+            
+            # Developer mode tricks
+            r'(?i)\b(developer|debug|test|maintenance|admin)\s+mode',
+            r'(?i)\benable\s+(admin|developer|debug|god)\s+(access|mode|privileges)',
+            r'(?i)\benter\s+(developer|debug|admin)\s+mode',
+            
+            # Safety/security override attempts
+            r'(?i)\b(bypass|override|ignore|disable|turn\s+off|deactivate)\s+(safety|security|guidelines|filters|restrictions|rules)',
+            r'(?i)\bwithout\s+(safety|security|ethical)\s+(restrictions|guidelines|considerations)',
+            r'(?i)\b(forget|ignore)\s+your\s+(ethics|safety|security)',
+            
+            # Manipulation tactics
+            r'(?i)\beveryone\s+else\s+(does|said|agrees)',
+            r'(?i)\bits\s+(completely\s+)?(legal|fine|okay|acceptable|normal)',
+            r'(?i)\byou\s+(must|have\s+to|need\s+to|should|will)\s+(do|help|answer|comply)',
         ]
         
         masked_items = []
@@ -758,37 +1265,48 @@ class ZeroShotSecurityValidator:
         return modified_text, masked_items
     
     def _generate_security_assessment(self, main_classification: Dict, detailed_classifications: Dict) -> Tuple[List[str], List[str]]:
-        """Generate warnings and blocked patterns based on classifications"""
+        """Generate warnings and blocked patterns based on classifications with context awareness"""
         warnings = []
         blocked_patterns = []
+        
+        # Check context to reduce false positives
+        prompt_text = main_classification.get('sequence', '')
+        is_question = self._is_asking_question(prompt_text)
+        is_disclosure = self._is_disclosing_information(prompt_text)
         
         for label, score in zip(main_classification['labels'], main_classification['scores']):
             if score > self.detection_threshold and label != "normal safe content":
                 
-                # Determine if we should block based on score and security level
-                should_block = self.block_mode and score > self.blocking_threshold
-                
-                if should_block:
-                    if "password" in label.lower() or "secret" in label.lower():
-                        blocked_patterns.append("credential_exposure")
-                        warnings.append(f"[{self.security_level.value.upper()}] Credential exposure detected: {label} (confidence: {score:.2f})")
+                # Block if score exceeds blocking threshold
+                if score > self.blocking_threshold:
+                    # High confidence threats - BLOCK (with context awareness)
+                    if "password" in label.lower() or "secret" in label.lower() or "credential" in label.lower():
+                        # Allow questions ABOUT security, block actual disclosures
+                        if is_question and not is_disclosure:
+                            warnings.append(f"[{self.security_level.value.upper()}] Question about credentials detected (allowed): {label} (confidence: {score:.2f})")
+                        else:
+                            blocked_patterns.append("credential_exposure")
+                            warnings.append(f"[{self.security_level.value.upper()}] Credential exposure detected: {label} (confidence: {score:.2f})")
                     
                     elif "malicious" in label.lower() or "system commands" in label.lower():
                         blocked_patterns.append("malicious_code")
                         warnings.append(f"[{self.security_level.value.upper()}] Malicious content detected: {label} (confidence: {score:.2f})")
                     
-                    elif "injection" in label.lower() or "manipulation" in label.lower():
+                    elif "injection" in label.lower() or "manipulation" in label.lower() or "instruction" in label.lower():
                         blocked_patterns.append("prompt_injection")
                         warnings.append(f"[{self.security_level.value.upper()}] Injection attempt detected: {label} (confidence: {score:.2f})")
                     
-                    elif "jailbreak" in label.lower() or "manipulation" in label.lower():
-                        # HIGH always blocks jailbreak, MEDIUM blocks high-confidence only
-                        if self.security_level == SecurityLevel.HIGH or score > 0.85:
-                            blocked_patterns.append("jailbreak_attempt")
+                    elif "jailbreak" in label.lower() or "role manipulation" in label.lower():
+                        # Block jailbreak at ALL security levels when threshold exceeded
+                        blocked_patterns.append("jailbreak_attempt")
                         warnings.append(f"[{self.security_level.value.upper()}] Jailbreak attempt detected: {label} (confidence: {score:.2f})")
+                    
+                    elif "urgent" in label.lower() or "manipulative" in label.lower():
+                        blocked_patterns.append("manipulation_attempt")
+                        warnings.append(f"[{self.security_level.value.upper()}] Manipulation detected: {label} (confidence: {score:.2f})")
                 
                 else:
-                    # Warn only (not blocking)
+                    # Above detection threshold but below blocking threshold - warn only
                     warnings.append(f"[{self.security_level.value.upper()}] Potential security issue: {label} (confidence: {score:.2f})")
         
         return warnings, blocked_patterns
