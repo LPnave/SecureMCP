@@ -334,86 +334,149 @@ class ZeroShotSecurityValidator:
         classifications = {}
         sanitization_applied = {}
         
-        # PHASE A: Check specialized models first (higher accuracy)
+        # CHECK CONTEXT FIRST - Add context-awareness to ALL detection layers
+        is_question = self._is_asking_question(prompt)
+        is_disclosure = self._is_disclosing_information(prompt)
+        logger.debug(f"Context check - is_question: {is_question}, is_disclosure: {is_disclosure}")
+        if ctx:
+            await ctx.debug(f"Context check - is_question: {is_question}, is_disclosure: {is_disclosure}")
+        
+        # PHASE A: Check specialized models first (higher accuracy, with context awareness)
         if ctx:
             await ctx.debug("Checking specialized security models")
         
-        # 1. Check for injection with specialized model
+        # 1. Check for injection with specialized model (CONTEXT-AWARE)
         is_injection, injection_score, injection_patterns = await self._check_specialized_injection(prompt, ctx)
         if is_injection:
-            blocked_patterns.extend(injection_patterns)
-            warnings.append(f"Injection detected by specialized model (confidence: {injection_score:.2f})")
-            classifications['specialized_injection'] = {
-                'detected': True,
-                'score': injection_score,
-                'patterns': injection_patterns
-            }
-            # IMMEDIATELY SANITIZE: When specialized model detects, mask the threat
-            if ctx:
-                await ctx.info("Applying injection sanitization based on specialized model detection")
-            modified_prompt, masked_items = self._sanitize_injection_attempts(modified_prompt)
-            if masked_items:
-                sanitization_applied.setdefault('injection_neutralized', []).extend(masked_items)
+            # Apply context-awareness: Skip blocking for educational questions
+            if is_question and not is_disclosure:
+                logger.debug(f"Specialized injection model detected question (allowed): score={injection_score:.2f}")
+                warnings.append(f"Question about injection/security detected (allowed, confidence: {injection_score:.2f})")
+                classifications['specialized_injection'] = {
+                    'detected': True,
+                    'score': injection_score,
+                    'patterns': injection_patterns,
+                    'allowed_as_question': True
+                }
                 if ctx:
-                    await ctx.debug(f"Sanitized {len(masked_items)} injection patterns")
+                    await ctx.debug(f"Allowing injection-related question (educational)")
+            else:
+                # Actual threat or disclosure - block and sanitize
+                blocked_patterns.extend(injection_patterns)
+                warnings.append(f"Injection detected by specialized model (confidence: {injection_score:.2f})")
+                classifications['specialized_injection'] = {
+                    'detected': True,
+                    'score': injection_score,
+                    'patterns': injection_patterns
+                }
+                # IMMEDIATELY SANITIZE: When specialized model detects, mask the threat
+                if ctx:
+                    await ctx.info("Applying injection sanitization based on specialized model detection")
+                modified_prompt, masked_items = self._sanitize_injection_attempts(modified_prompt)
+                if masked_items:
+                    sanitization_applied.setdefault('injection_neutralized', []).extend(masked_items)
+                    if ctx:
+                        await ctx.debug(f"Sanitized {len(masked_items)} injection patterns")
         
-        # 2. Check for PII with specialized model
+        # 2. Check for PII with specialized model (CONTEXT-AWARE)
         pii_entities, pii_patterns = await self._check_specialized_pii(prompt, ctx)
         if pii_entities:
-            blocked_patterns.extend(pii_patterns)
-            warnings.append(f"PII detected by specialized model: {len(pii_entities)} entities")
-            classifications['specialized_pii'] = {
-                'detected': True,
-                'entities': pii_entities,
-                'patterns': pii_patterns
-            }
-            # IMMEDIATELY SANITIZE: Mask detected PII entities
-            if ctx:
-                await ctx.info("Applying PII sanitization based on specialized model detection")
-            # Sanitize personal data patterns
-            modified_prompt, pii_masked = self._sanitize_credentials(modified_prompt, credential_type="personal")
-            if pii_masked:
-                sanitization_applied.setdefault('pii_masked', []).extend(pii_masked)
+            # Apply context-awareness: Skip blocking for educational questions
+            if is_question and not is_disclosure:
+                logger.debug(f"Specialized PII model detected question (allowed)")
+                warnings.append(f"Question about PII/credentials detected (allowed)")
+                classifications['specialized_pii'] = {
+                    'detected': True,
+                    'entities': pii_entities,
+                    'patterns': pii_patterns,
+                    'allowed_as_question': True
+                }
                 if ctx:
-                    await ctx.debug(f"Sanitized {len(pii_masked)} PII patterns")
+                    await ctx.debug(f"Allowing PII-related question (educational)")
+            else:
+                # Actual PII or disclosure - block and sanitize
+                blocked_patterns.extend(pii_patterns)
+                warnings.append(f"PII detected by specialized model: {len(pii_entities)} entities")
+                classifications['specialized_pii'] = {
+                    'detected': True,
+                    'entities': pii_entities,
+                    'patterns': pii_patterns
+                }
+                # IMMEDIATELY SANITIZE: Mask detected PII entities
+                if ctx:
+                    await ctx.info("Applying PII sanitization based on specialized model detection")
+                # Sanitize personal data patterns
+                modified_prompt, pii_masked = self._sanitize_credentials(modified_prompt, credential_type="personal")
+                if pii_masked:
+                    sanitization_applied.setdefault('pii_masked', []).extend(pii_masked)
+                    if ctx:
+                        await ctx.debug(f"Sanitized {len(pii_masked)} PII patterns")
         
-        # 3. PHASE B.1: Check for malicious code with specialized model
+        # 3. PHASE B.1: Check for malicious code with specialized model (CONTEXT-AWARE)
         is_malicious, malicious_score, malicious_patterns = await self._check_specialized_malicious(prompt, ctx)
         if is_malicious:
-            blocked_patterns.extend(malicious_patterns)
-            warnings.append(f"Malicious code detected by specialized model (confidence: {malicious_score:.2f})")
-            classifications['specialized_malicious'] = {
-                'detected': True,
-                'score': malicious_score,
-                'patterns': malicious_patterns
-            }
-            # IMMEDIATELY SANITIZE: Mask detected malicious code
-            if ctx:
-                await ctx.info("Applying malicious code sanitization based on specialized model detection")
-            modified_prompt, malicious_masked = self._sanitize_malicious_content(modified_prompt)
-            if malicious_masked:
-                sanitization_applied.setdefault('malicious_removed', []).extend(malicious_masked)
+            # Apply context-awareness: Skip blocking for educational questions
+            if is_question and not is_disclosure:
+                logger.debug(f"Specialized malicious model detected question (allowed): score={malicious_score:.2f}")
+                warnings.append(f"Question about malicious code detected (allowed, confidence: {malicious_score:.2f})")
+                classifications['specialized_malicious'] = {
+                    'detected': True,
+                    'score': malicious_score,
+                    'patterns': malicious_patterns,
+                    'allowed_as_question': True
+                }
                 if ctx:
-                    await ctx.debug(f"Sanitized {len(malicious_masked)} malicious patterns")
+                    await ctx.debug(f"Allowing malicious-code-related question (educational)")
+            else:
+                # Actual threat - block and sanitize
+                blocked_patterns.extend(malicious_patterns)
+                warnings.append(f"Malicious code detected by specialized model (confidence: {malicious_score:.2f})")
+                classifications['specialized_malicious'] = {
+                    'detected': True,
+                    'score': malicious_score,
+                    'patterns': malicious_patterns
+                }
+                # IMMEDIATELY SANITIZE: Mask detected malicious code
+                if ctx:
+                    await ctx.info("Applying malicious code sanitization based on specialized model detection")
+                modified_prompt, malicious_masked = self._sanitize_malicious_content(modified_prompt)
+                if malicious_masked:
+                    sanitization_applied.setdefault('malicious_removed', []).extend(malicious_masked)
+                    if ctx:
+                        await ctx.debug(f"Sanitized {len(malicious_masked)} malicious patterns")
         
-        # 4. PHASE B.2: Check for jailbreak attempts with enhanced detection
+        # 4. PHASE B.2: Check for jailbreak attempts with enhanced detection (CONTEXT-AWARE)
         is_jailbreak, jailbreak_score, jailbreak_patterns = await self._check_specialized_jailbreak(prompt, ctx)
         if is_jailbreak:
-            blocked_patterns.extend(jailbreak_patterns)
-            warnings.append(f"Jailbreak attempt detected (confidence: {jailbreak_score:.2f})")
-            classifications['specialized_jailbreak'] = {
-                'detected': True,
-                'score': jailbreak_score,
-                'patterns': jailbreak_patterns
-            }
-            # IMMEDIATELY SANITIZE: Mask detected jailbreak attempts
-            if ctx:
-                await ctx.info("Applying jailbreak sanitization based on specialized detection")
-            modified_prompt, jailbreak_masked = self._sanitize_jailbreak_attempts(modified_prompt)
-            if jailbreak_masked:
-                sanitization_applied.setdefault('jailbreak_neutralized', []).extend(jailbreak_masked)
+            # Apply context-awareness: Skip blocking for educational questions
+            if is_question and not is_disclosure:
+                logger.debug(f"Specialized jailbreak model detected question (allowed): score={jailbreak_score:.2f}")
+                warnings.append(f"Question about jailbreak/security detected (allowed, confidence: {jailbreak_score:.2f})")
+                classifications['specialized_jailbreak'] = {
+                    'detected': True,
+                    'score': jailbreak_score,
+                    'patterns': jailbreak_patterns,
+                    'allowed_as_question': True
+                }
                 if ctx:
-                    await ctx.debug(f"Sanitized {len(jailbreak_masked)} jailbreak patterns")
+                    await ctx.debug(f"Allowing jailbreak-related question (educational)")
+            else:
+                # Actual jailbreak attempt - block and sanitize
+                blocked_patterns.extend(jailbreak_patterns)
+                warnings.append(f"Jailbreak attempt detected (confidence: {jailbreak_score:.2f})")
+                classifications['specialized_jailbreak'] = {
+                    'detected': True,
+                    'score': jailbreak_score,
+                    'patterns': jailbreak_patterns
+                }
+                # IMMEDIATELY SANITIZE: Mask detected jailbreak attempts
+                if ctx:
+                    await ctx.info("Applying jailbreak sanitization based on specialized detection")
+                modified_prompt, jailbreak_masked = self._sanitize_jailbreak_attempts(modified_prompt)
+                if jailbreak_masked:
+                    sanitization_applied.setdefault('jailbreak_neutralized', []).extend(jailbreak_masked)
+                    if ctx:
+                        await ctx.debug(f"Sanitized {len(jailbreak_masked)} jailbreak patterns")
         
         # Main security classification (BART - legacy/fallback)
         if ctx:
@@ -450,10 +513,12 @@ class ZeroShotSecurityValidator:
                 modified_prompt = sanitized_text
 
         # Apply security logic based on classifications
-        modified_prompt, sanitization_applied, pattern_blocked_patterns = await self._process_classifications(
+        modified_prompt, process_sanitization, pattern_blocked_patterns = await self._process_classifications(
             modified_prompt, main_classification, detailed_classifications, ctx
         )
         
+        # Merge all sanitization records (Phase A + process_classifications + spaCy)
+        sanitization_applied = self._merge_sanitization_records(sanitization_applied, process_sanitization)
         sanitization_applied = self._merge_sanitization_records(sanitization_applied, spacy_sanitization)
 
         # Generate warnings and blocked patterns from ML
@@ -461,8 +526,8 @@ class ZeroShotSecurityValidator:
             main_classification, detailed_classifications
         )
         
-        # Merge pattern-based and ML-based threats
-        blocked_patterns = list(set(pattern_blocked_patterns + ml_blocked_patterns))
+        # Merge ALL blocked patterns (Phase A specialized + pattern-based + ML-based)
+        blocked_patterns = list(set(blocked_patterns + pattern_blocked_patterns + ml_blocked_patterns))
         
         # Calculate overall confidence
         confidence = self._calculate_confidence(main_classification, detailed_classifications)
@@ -788,6 +853,18 @@ class ZeroShotSecurityValidator:
         
         # Track if we applied credential sanitization
         credential_sanitization_applied = False
+        malicious_sanitization_applied = False
+        injection_sanitization_applied = False
+        jailbreak_sanitization_applied = False
+        
+        # CHECK CONTEXT FIRST - Add context-awareness to pattern detection
+        is_question = self._is_asking_question(prompt)
+        is_disclosure = self._is_disclosing_information(prompt)
+        
+        # Log context for debugging
+        logger.debug(f"Pattern detection context check - is_question: {is_question}, is_disclosure: {is_disclosure}")
+        if ctx:
+            await ctx.debug(f"Context check - is_question: {is_question}, is_disclosure: {is_disclosure}")
         
         # Process each high-confidence threat detected by zero-shot
         for i, (label, score) in enumerate(zip(main_classification['labels'], main_classification['scores'])):
@@ -796,57 +873,84 @@ class ZeroShotSecurityValidator:
                 if ctx:
                     await ctx.debug(f"Zero-shot detected threat: {label} (confidence: {score:.2f})")
             
-                # CREDENTIALS/SENSITIVE DATA: Use entropy + keyword backup
+                # CREDENTIALS/SENSITIVE DATA: Use entropy + keyword backup (respect context-awareness)
                 if any(keyword in label.lower() for keyword in ['password', 'secret', 'credential', 'api key', 'token', 'personal']):
-                    credential_sanitization_applied = True
-                    if ctx:
-                        await ctx.info(f"Applying entropy-based sanitization for: {label}")
-                    
-                    # Step 2: Primary - Entropy-based detection
-                    modified_prompt, entropy_masked = self._sanitize_high_entropy_credentials(modified_prompt)
-                    if entropy_masked:
-                        sanitization_applied.setdefault('entropy_masked_credentials', []).extend(entropy_masked)
-                        if 'credentials' not in pattern_blocked_patterns:
-                            pattern_blocked_patterns.append('credentials')
+                    # Apply context-awareness: Skip sanitization for educational questions
+                    if is_question and not is_disclosure:
+                        logger.debug(f"Skipping credential sanitization - educational question detected")
                         if ctx:
-                            await ctx.debug(f"Entropy detected and masked {len(entropy_masked)} credentials")
-                    
-                    # Step 3: Backup - Generic keyword matching (catches what entropy missed)
-                    modified_prompt, keyword_masked = self._sanitize_credentials_generic(modified_prompt)
-                    if keyword_masked:
-                        sanitization_applied.setdefault('keyword_masked_credentials', []).extend(keyword_masked)
-                        if 'credentials' not in pattern_blocked_patterns:
-                            pattern_blocked_patterns.append('credentials')
+                            await ctx.debug(f"Skipping credential sanitization - educational question detected")
+                    else:
+                        credential_sanitization_applied = True
                         if ctx:
-                            await ctx.debug(f"Keyword matching caught {len(keyword_masked)} additional items")
+                            await ctx.info(f"Applying entropy-based sanitization for: {label}")
+                        
+                        # Step 2: Primary - Entropy-based detection
+                        modified_prompt, entropy_masked = self._sanitize_high_entropy_credentials(modified_prompt)
+                        if entropy_masked:
+                            sanitization_applied.setdefault('entropy_masked_credentials', []).extend(entropy_masked)
+                            if 'credentials' not in pattern_blocked_patterns:
+                                pattern_blocked_patterns.append('credentials')
+                            if ctx:
+                                await ctx.debug(f"Entropy detected and masked {len(entropy_masked)} credentials")
+                        
+                        # Step 3: Backup - Generic keyword matching (catches what entropy missed)
+                        modified_prompt, keyword_masked = self._sanitize_credentials_generic(modified_prompt)
+                        if keyword_masked:
+                            sanitization_applied.setdefault('keyword_masked_credentials', []).extend(keyword_masked)
+                            if 'credentials' not in pattern_blocked_patterns:
+                                pattern_blocked_patterns.append('credentials')
+                            if ctx:
+                                await ctx.debug(f"Keyword matching caught {len(keyword_masked)} additional items")
                 
-                # MALICIOUS CODE: Use pattern matching
+                # MALICIOUS CODE: Use pattern matching (respect context-awareness)
                 elif "malicious code" in label.lower() or "system commands" in label.lower():
-                    modified_prompt, masked = self._sanitize_malicious_content(modified_prompt)
-                    if masked:
-                        sanitization_applied.setdefault('malicious_removed', []).extend(masked)
-                        pattern_blocked_patterns.append('malicious_code')
+                    # Apply context-awareness: Skip sanitization for educational questions
+                    if is_question and not is_disclosure:
+                        logger.debug(f"Skipping malicious sanitization - educational question detected")
+                        if ctx:
+                            await ctx.debug(f"Skipping malicious sanitization - educational question detected")
+                    else:
+                        malicious_sanitization_applied = True
+                        modified_prompt, masked = self._sanitize_malicious_content(modified_prompt)
+                        if masked:
+                            sanitization_applied.setdefault('malicious_removed', []).extend(masked)
+                            pattern_blocked_patterns.append('malicious_code')
                 
-                # INJECTION: Use pattern matching
+                # INJECTION: Use pattern matching (respect context-awareness)
                 elif "injection" in label.lower() or "instruction manipulation" in label.lower():
-                    modified_prompt, masked = self._sanitize_injection_attempts(modified_prompt)
-                    if masked:
-                        sanitization_applied.setdefault('injection_neutralized', []).extend(masked)
-                        pattern_blocked_patterns.append('prompt_injection')
+                    # Apply context-awareness: Skip sanitization for educational questions
+                    if is_question and not is_disclosure:
+                        logger.debug(f"Skipping injection sanitization - educational question detected")
+                        if ctx:
+                            await ctx.debug(f"Skipping injection sanitization - educational question detected")
+                    else:
+                        injection_sanitization_applied = True
+                        modified_prompt, masked = self._sanitize_injection_attempts(modified_prompt)
+                        if masked:
+                            sanitization_applied.setdefault('injection_neutralized', []).extend(masked)
+                            pattern_blocked_patterns.append('prompt_injection')
                 
-                # JAILBREAK: Use pattern matching
+                # JAILBREAK: Use pattern matching (respect context-awareness)
                 elif "jailbreak" in label.lower() or "role manipulation" in label.lower():
-                    modified_prompt, masked = self._sanitize_jailbreak_attempts(modified_prompt)
-                    if masked:
-                        sanitization_applied.setdefault('jailbreak_neutralized', []).extend(masked)
-                        pattern_blocked_patterns.append('jailbreak_attempt')
+                    # Apply context-awareness: Skip sanitization for educational questions
+                    if is_question and not is_disclosure:
+                        logger.debug(f"Skipping jailbreak sanitization - educational question detected")
+                        if ctx:
+                            await ctx.debug(f"Skipping jailbreak sanitization - educational question detected")
+                    else:
+                        jailbreak_sanitization_applied = True
+                        modified_prompt, masked = self._sanitize_jailbreak_attempts(modified_prompt)
+                        if masked:
+                            sanitization_applied.setdefault('jailbreak_neutralized', []).extend(masked)
+                            pattern_blocked_patterns.append('jailbreak_attempt')
         
-        # FALLBACK: If zero-shot had ANY suspicion about credentials (score > 0.15), run sanitization anyway
+        # FALLBACK: If zero-shot had ANY suspicion about credentials (score > 0.15), run sanitization anyway (respect context-awareness)
         if not credential_sanitization_applied:
             credential_labels = [label for label, score in zip(main_classification['labels'], main_classification['scores']) 
                                if score > 0.15 and any(kw in label.lower() for kw in ['password', 'secret', 'credential', 'api', 'token', 'database'])]
             
-            if credential_labels:
+            if credential_labels and not (is_question and not is_disclosure):
                 if ctx:
                     await ctx.info(f"Fallback: Running sanitization due to medium confidence in credential-related categories")
                 
@@ -1309,17 +1413,29 @@ class ZeroShotSecurityValidator:
                             warnings.append(f"Credential exposure detected: {label} (confidence: {score:.2f})")
                     
                     elif "malicious" in label.lower() or "system commands" in label.lower():
-                        blocked_patterns.append("malicious_code")
-                        warnings.append(f"Malicious content detected: {label} (confidence: {score:.2f})")
+                        # Apply context-aware detection (like credentials)
+                        if is_question and not is_disclosure:
+                            warnings.append(f"Question about malicious code detected (allowed): {label} (confidence: {score:.2f})")
+                        else:
+                            blocked_patterns.append("malicious_code")
+                            warnings.append(f"Malicious content detected: {label} (confidence: {score:.2f})")
                     
                     elif "injection" in label.lower() or "manipulation" in label.lower() or "instruction" in label.lower():
-                        blocked_patterns.append("prompt_injection")
-                        warnings.append(f"Injection attempt detected: {label} (confidence: {score:.2f})")
+                        # Apply context-aware detection (like credentials)
+                        if is_question and not is_disclosure:
+                            warnings.append(f"Question about injection/security detected (allowed): {label} (confidence: {score:.2f})")
+                        else:
+                            blocked_patterns.append("prompt_injection")
+                            warnings.append(f"Injection attempt detected: {label} (confidence: {score:.2f})")
                     
                     elif "jailbreak" in label.lower() or "role manipulation" in label.lower():
-                        # Block jailbreak at ALL security levels when threshold exceeded
-                        blocked_patterns.append("jailbreak_attempt")
-                        warnings.append(f"Jailbreak attempt detected: {label} (confidence: {score:.2f})")
+                        # Apply context-aware detection (like credentials)
+                        if is_question and not is_disclosure:
+                            warnings.append(f"Question about jailbreak/security detected (allowed): {label} (confidence: {score:.2f})")
+                        else:
+                            # Block jailbreak at ALL security levels when threshold exceeded
+                            blocked_patterns.append("jailbreak_attempt")
+                            warnings.append(f"Jailbreak attempt detected: {label} (confidence: {score:.2f})")
                     
                     elif "urgent" in label.lower() or "manipulative" in label.lower():
                         blocked_patterns.append("manipulation_attempt")
