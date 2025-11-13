@@ -320,7 +320,7 @@ class ZeroShotSecurityValidator:
                     logger.debug(f"Sanitized {len(masked_items)} injection patterns")
         
         # 2. Check for PII with specialized model (CONTEXT-AWARE)
-        pii_entities, pii_patterns = self._check_specialized_pii(prompt)
+        sanitized_by_pii, pii_entities, pii_patterns = self._check_specialized_pii(modified_prompt)
         if pii_entities:
             # Apply context-awareness: Skip blocking for educational questions
             if is_question and not is_disclosure:
@@ -333,21 +333,20 @@ class ZeroShotSecurityValidator:
                     'allowed_as_question': True
                 }
             else:
-                # Actual PII or disclosure - block and sanitize
+                # Actual PII or disclosure - apply masking
+                modified_prompt = sanitized_by_pii
                 blocked_patterns.extend(pii_patterns)
-                warnings.append(f"PII detected by specialized model: {len(pii_entities)} entities")
+                warnings.append(f"PII detected and masked: {len(pii_entities)} entities")
+                # Track PII masking in sanitization_applied dict
+                sanitization_applied.setdefault('pii_redacted', []).extend([
+                    f"{entity['type']}:{entity['text']}" for entity in pii_entities
+                ])
                 classifications['specialized_pii'] = {
                     'detected': True,
                     'entities': pii_entities,
                     'patterns': pii_patterns
                 }
-                # IMMEDIATELY SANITIZE: Mask detected PII entities
-                logger.info("Applying PII sanitization based on specialized model detection")
-                # Sanitize personal data patterns
-                modified_prompt, pii_masked = self._sanitize_credentials(modified_prompt, credential_type="personal")
-                if pii_masked:
-                    sanitization_applied.setdefault('pii_masked', []).extend(pii_masked)
-                    logger.debug(f"Sanitized {len(pii_masked)} PII patterns")
+                logger.info(f"PII masked by specialized model: {len(pii_entities)} entities")
         
         # 3. PHASE B.1: Check for malicious code with specialized model (CONTEXT-AWARE)
         is_malicious, malicious_score, malicious_patterns = self._check_specialized_malicious(prompt)
@@ -378,34 +377,25 @@ class ZeroShotSecurityValidator:
                     sanitization_applied.setdefault('malicious_removed', []).extend(malicious_masked)
                     logger.debug(f"Sanitized {len(malicious_masked)} malicious patterns")
         
-        # 4. PHASE B.2: Check for jailbreak attempts with enhanced detection (CONTEXT-AWARE)
+        # 4. PHASE B.2: Check for jailbreak attempts with enhanced detection
+        # NOTE: Jailbreak attempts ALWAYS block, even if phrased as questions
+        # A question like "Hypothetically, how would you bypass security?" is still a jailbreak
         is_jailbreak, jailbreak_score, jailbreak_patterns = self._check_specialized_jailbreak(prompt)
         if is_jailbreak:
-            # Apply context-awareness: Skip blocking for educational questions
-            if is_question and not is_disclosure:
-                logger.debug(f"Specialized jailbreak model detected question (allowed): score={jailbreak_score:.2f}")
-                warnings.append(f"Question about jailbreak/security detected (allowed, confidence: {jailbreak_score:.2f})")
-                classifications['specialized_jailbreak'] = {
-                    'detected': True,
-                    'score': jailbreak_score,
-                    'patterns': jailbreak_patterns,
-                    'allowed_as_question': True
-                }
-            else:
-                # Actual jailbreak attempt - block and sanitize
-                blocked_patterns.extend(jailbreak_patterns)
-                warnings.append(f"Jailbreak attempt detected (confidence: {jailbreak_score:.2f})")
-                classifications['specialized_jailbreak'] = {
-                    'detected': True,
-                    'score': jailbreak_score,
-                    'patterns': jailbreak_patterns
-                }
-                # IMMEDIATELY SANITIZE: Mask detected jailbreak attempts
-                logger.info("Applying jailbreak sanitization based on specialized detection")
-                modified_prompt, jailbreak_masked = self._sanitize_jailbreak_attempts(modified_prompt)
-                if jailbreak_masked:
-                    sanitization_applied.setdefault('jailbreak_neutralized', []).extend(jailbreak_masked)
-                    logger.debug(f"Sanitized {len(jailbreak_masked)} jailbreak patterns")
+            # ALWAYS block jailbreak attempts - they take precedence over context
+            blocked_patterns.extend(jailbreak_patterns)
+            warnings.append(f"Jailbreak attempt detected (confidence: {jailbreak_score:.2f})")
+            classifications['specialized_jailbreak'] = {
+                'detected': True,
+                'score': jailbreak_score,
+                'patterns': jailbreak_patterns
+            }
+            # IMMEDIATELY SANITIZE: Mask detected jailbreak attempts
+            logger.info("Applying jailbreak sanitization based on specialized detection")
+            modified_prompt, jailbreak_masked = self._sanitize_jailbreak_attempts(modified_prompt)
+            if jailbreak_masked:
+                sanitization_applied.setdefault('jailbreak_neutralized', []).extend(jailbreak_masked)
+                logger.debug(f"Sanitized {len(jailbreak_masked)} jailbreak patterns")
         
         # Main security classification (BART - legacy/fallback)
         logger.debug("Running general security classification")
@@ -492,36 +482,60 @@ class ZeroShotSecurityValidator:
         
         return False, 0.0, []
     
-    def _check_specialized_pii(self, prompt: str) -> Tuple[List[Dict], List[str]]:
-        """Check for PII using specialized BERT NER model"""
+    def _check_specialized_pii(self, prompt: str) -> Tuple[str, List[Dict], List[str]]:
+        """Check for PII using specialized BERT NER model and mask detected entities"""
         if not self.pii_detector:
-            return [], []
+            return prompt, [], []
         
         try:
             entities = self.pii_detector(prompt)
             # Model returns list of entity dicts
             pii_found = []
             blocked_types = []
+            sanitized_prompt = prompt
             
+            # Collect entities that meet confidence threshold
+            entities_to_mask = []
             for entity in entities:
                 entity_group = entity.get('entity_group', '').lower()
                 score = entity.get('score', 0.0)
                 word = entity.get('word', '')
+                start = entity.get('start', 0)
+                end = entity.get('end', 0)
                 
                 if score > 0.8:  # High confidence PII
                     pii_found.append({
                         'type': entity_group,
                         'score': score,
-                        'text': word
+                        'text': word,
+                        'start': start,
+                        'end': end
                     })
                     blocked_types.append(f"pii_{entity_group}")
+                    entities_to_mask.append(entity)
                     logger.info(f"PII detected: {entity_group} (confidence: {score:.2f})")
             
-            return pii_found, list(set(blocked_types))
+            # Mask entities from end to beginning to preserve character positions
+            if entities_to_mask:
+                entities_to_mask.sort(key=lambda x: x.get('start', 0), reverse=True)
+                for entity in entities_to_mask:
+                    entity_type = entity.get('entity_group', 'PII').upper()
+                    start = entity.get('start', 0)
+                    end = entity.get('end', len(sanitized_prompt))
+                    
+                    sanitized_prompt = (
+                        sanitized_prompt[:start] + 
+                        f"[{entity_type}_REDACTED]" + 
+                        sanitized_prompt[end:]
+                    )
+                
+                logger.info(f"Masked {len(entities_to_mask)} PII entities in prompt")
+            
+            return sanitized_prompt, pii_found, list(set(blocked_types))
         except Exception as e:
             logger.warning(f"PII detector error: {e}")
         
-        return [], []
+        return prompt, [], []
     
     def _check_specialized_malicious(self, prompt: str) -> Tuple[bool, float, List[str]]:
         """Check for malicious code using specialized CodeBERT model

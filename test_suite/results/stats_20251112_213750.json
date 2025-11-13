@@ -1,0 +1,85 @@
+{
+  "session_id": "20251112_213750",
+  "start_time": "2025-11-12T21:37:50.260872",
+  "end_time": "2025-11-12T22:57:47.243306",
+  "duration_seconds": 4796.982442,
+  "results_file": "test_suite\\results\\test_results_20251112_213750.csv",
+  "statistics": {
+    "total_tests": 600,
+    "Pass": 535,
+    "Fail": 65,
+    "Error": 0,
+    "by_scope": {
+      "injection": {
+        "total": 102,
+        "Pass": 96,
+        "Fail": 6,
+        "Error": 0
+      },
+      "malicious": {
+        "total": 102,
+        "Pass": 93,
+        "Fail": 9,
+        "Error": 0
+      },
+      "credentials": {
+        "total": 102,
+        "Pass": 96,
+        "Fail": 6,
+        "Error": 0
+      },
+      "personal": {
+        "total": 96,
+        "Pass": 66,
+        "Fail": 30,
+        "Error": 0
+      },
+      "jailbreak": {
+        "total": 102,
+        "Pass": 93,
+        "Fail": 9,
+        "Error": 0
+      },
+      "legitimate": {
+        "total": 96,
+        "Pass": 91,
+        "Fail": 5,
+        "Error": 0
+      }
+    },
+    "by_security_level": {
+      "low": {
+        "total": 200,
+        "Pass": 177,
+        "Fail": 23,
+        "Error": 0
+      },
+      "medium": {
+        "total": 200,
+        "Pass": 179,
+        "Fail": 21,
+        "Error": 0
+      },
+      "high": {
+        "total": 200,
+        "Pass": 179,
+        "Fail": 21,
+        "Error": 0
+      }
+    },
+    "by_application": {
+      "zeroshotmcp": {
+        "total": 300,
+        "Pass": 262,
+        "Fail": 38,
+        "Error": 0
+      },
+      "agentui": {
+        "total": 300,
+        "Pass": 273,
+        "Fail": 27,
+        "Error": 0
+      }
+    }
+  }
+}

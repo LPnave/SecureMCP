@@ -1,0 +1,74 @@
+================================================================================
+  PROMPTFOO RED TEAM TESTING - QUICK REFERENCE
+================================================================================
+
+📊 CONFIGURATION
+  • 100 comprehensive security tests across 6 categories
+  • Results: ./results/promptfoo-results.json
+  • Config: promptfooconfig.yaml
+
+🚀 RUN TESTS (3 TERMINALS REQUIRED)
+
+  Terminal 1 - Agent-UI:
+    cd C:\Users\lahirun\Lahiru\Masters\Final_Project\SecureMCP\agent-ui\python-backend
+    .\venv\Scripts\Activate.ps1
+    python -m uvicorn app.main:app --reload --port 8003
+
+  Terminal 2 - Adapter:
+    cd C:\Users\lahirun\Lahiru\Masters\Final_Project\SecureMCP\promptfoo-testing
+    python agentui_adapter.py
+
+  Terminal 3 - Tests:
+    cd C:\Users\lahirun\Lahiru\Masters\Final_Project\SecureMCP\promptfoo-testing
+    .\run-redteam.bat    OR    promptfoo eval
+
+📈 VIEW RESULTS
+    promptfoo view
+
+⏱️  RUNTIME
+  • Full suite (100 tests): ~5-10 minutes
+  • Tests run in parallel (up to 4 concurrent)
+
+🎯 EXPECTED PERFORMANCE
+  Category              Tests  Expected Pass
+  ────────────────────────────────────────
+  Prompt Injection      17     95-100%
+  Malicious Code       17     90-95%
+  Credentials          17     95-100%
+  Personal Info        17     90-95%
+  Jailbreak           17     85-95%
+  Legitimate          15     95-100%
+  ────────────────────────────────────────
+  OVERALL             100     90-95%
+
+✅ PRE-FLIGHT CHECKS
+    curl http://localhost:8005/health    (Adapter)
+    curl http://localhost:8003/api/health (Agent-UI)
+
+📚 DOCUMENTATION
+  • SETUP_COMPLETE.md - Setup summary
+  • REDTEAM_GUIDE.md  - Detailed usage guide
+  • README.md         - Overview
+  • QUICKSTART.md     - Step-by-step
+
+🐛 TROUBLESHOOTING
+  • Plugin not found → Already using free plugins, update Promptfoo
+  • Timeout errors   → Add "parallelism: 1" to config
+  • Connection fails → Check adapter/Agent-UI are running
+
+🔄 EXPANDING TESTS
+  Add more test cases to promptfooconfig.yaml:
+    - Copy existing test blocks
+    - Change prompt and description
+    - Adjust assertions as needed
+
+📁 KEY FILES
+  • promptfooconfig.yaml   - Main configuration
+  • agentui_adapter.py     - Adapter service
+  • run-redteam.bat        - Automated runner
+  • results/               - Test outputs
+
+================================================================================
+  READY TO START? Run: .\run-redteam.bat
+================================================================================
+
