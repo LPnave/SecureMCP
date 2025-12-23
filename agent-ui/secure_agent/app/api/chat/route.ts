@@ -88,11 +88,11 @@ export async function POST(req: Request) {
       async start(controller) {
         try {
           let buffer = "";
-          // let sanitizationData: any;
-          let sanitizationData: {
-            is_safe?: boolean;
-            warnings?: string[];
-          } | null = null;
+          let sanitizationData: any;
+          // let sanitizationData: {
+          //   is_safe?: boolean;
+          //   warnings?: string[];
+          // } | null = null;
 
           // Read the stream from Python backend
           while (true) {
