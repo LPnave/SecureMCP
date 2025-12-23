@@ -1383,9 +1383,9 @@ SecureMCP includes a comprehensive CircleCI configuration (`.circleci/config.yml
 
 The CircleCI workflow executes five parallel jobs that run independently and then converge for a final integration check:
 
-**test-zeroshotmcp** - Validates the ZeroShotMCP Python application by installing dependencies from `requirements-zeroshot.txt`, verifying the module can be imported successfully, and performing syntax checks on the main server and configuration files. This job uses Python 3.11 with dependency caching to speed up subsequent runs.
+**test-zeroshotmcp** - Validates the ZeroShotMCP Python application by installing dependencies from `requirements-zeroshot.txt`, downloading the required spaCy English language model (`en_core_web_sm`), verifying the module can be imported successfully, and performing syntax checks on the main server and configuration files. This job uses Python 3.11 with dependency caching to speed up subsequent runs.
 
-**test-agent-ui-backend** - Tests the Agent-UI Python backend by installing FastAPI and ML dependencies from the backend's `requirements.txt`, executing pytest tests for sanitization and security levels, and validating that core modules (FastAPI app, SecurityValidator) load correctly. This ensures the REST API layer functions properly and the security validation core remains intact.
+**test-agent-ui-backend** - Tests the Agent-UI Python backend by installing FastAPI and ML dependencies from the backend's `requirements.txt`, downloading the required spaCy English language model (`en_core_web_sm`), executing pytest tests for sanitization and security levels, and validating that core modules (FastAPI app, ZeroShotSecurityValidator) load correctly. This ensures the REST API layer functions properly and the security validation core remains intact.
 
 **test-agent-ui-frontend** - Validates the Agent-UI Next.js frontend by installing Node.js dependencies using `npm ci`, running ESLint to catch code quality issues, executing Prettier checks to ensure consistent code formatting, and performing a full production build to verify all components compile successfully. The built artifacts are persisted for potential deployment use.
 

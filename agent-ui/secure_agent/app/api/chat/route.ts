@@ -80,7 +80,7 @@ export async function POST(req: Request) {
       async start(controller) {
         try {
           let buffer = '';
-          let sanitizationData: any = null;
+          let sanitizationData: { is_safe?: boolean; warnings?: string[] } | null = null;
           
           // Read the stream from Python backend
           while (true) {
@@ -122,7 +122,7 @@ export async function POST(req: Request) {
                 try {
                   const finishData = JSON.parse(data);
                   controller.enqueue(encoder.encode(`e:${JSON.stringify(finishData)}\n`));
-                } catch (e) {
+                } catch {
                   // If parse fails, send default finish
                   controller.enqueue(encoder.encode(`e:${JSON.stringify({ finishReason: 'stop' })}\n`));
                 }

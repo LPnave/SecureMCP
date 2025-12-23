@@ -24,6 +24,7 @@ jobs:
             . venv/bin/activate
             pip install --upgrade pip
             pip install -r requirements-zeroshot.txt
+            python -m spacy download en_core_web_sm
       - save_cache:
           key: zeroshotmcp-deps-v1-{{ checksum "zeroshotmcp/requirements-zeroshot.txt" }}
           paths:
@@ -61,6 +62,7 @@ jobs:
             . venv/bin/activate
             pip install --upgrade pip
             pip install -r requirements.txt
+            python -m spacy download en_core_web_sm
       - save_cache:
           key: backend-deps-v1-{{ checksum "agent-ui/python-backend/requirements.txt" }}
           paths:
@@ -78,7 +80,7 @@ jobs:
             cd agent-ui/python-backend
             . venv/bin/activate
             python -c "from app.main import app; print('Backend app loaded successfully')"
-            python -c "from app.core.security import SecurityValidator; print('SecurityValidator loaded')"
+            python -c "from app.core.security import ZeroShotSecurityValidator; print('ZeroShotSecurityValidator loaded')"
 
   # Agent-UI Next.js Frontend
   test-agent-ui-frontend:
