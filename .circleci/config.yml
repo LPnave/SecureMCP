@@ -113,6 +113,11 @@ jobs:
             cd agent-ui/secure_agent
             npm run prettier
       - run:
+          name: Clean Build Artifacts
+          command: |
+            cd agent-ui/secure_agent
+            rm -rf .next
+      - run:
           name: Build Frontend
           command: |
             cd agent-ui/secure_agent

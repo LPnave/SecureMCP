@@ -88,6 +88,7 @@ export async function POST(req: Request) {
       async start(controller) {
         try {
           let buffer = "";
+          // let sanitizationData: any;
           let sanitizationData: {
             is_safe?: boolean;
             warnings?: string[];
