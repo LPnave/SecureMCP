@@ -17,8 +17,8 @@ export interface SanitizeResponse {
   confidence: number;
   modifications_made: boolean;
   sanitization_details?: {
-    classifications: any;
-    // classifications: Record<string, unknown>;
+    // classifications: any;
+    classifications: Record<string, unknown>;
     sanitization_applied: Record<string, string[]>;
   };
   processing_time_ms: number;
