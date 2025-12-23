@@ -1,0 +1,6 @@
+---
+description: for post analysis of the new test results
+alwaysApply: false
+---
+Whenever the new test results in /test_suite/results are asked to be analyzed, place the analysis document in the analysis directory
+@analysis

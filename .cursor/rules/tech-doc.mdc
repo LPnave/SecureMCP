@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+update the technical document whenever you make changes to the code in the two applications (zeroshotmcp and agent-ui)
+@SecureMCP_Technical_Documentation.md

@@ -283,9 +283,11 @@ class ZeroShotSecurityValidator:
         sanitization_applied = {}
         
         # CHECK CONTEXT FIRST - Add context-awareness to ALL detection layers
+        # Phase 2.2: Include configuration context
         is_question = self._is_asking_question(prompt)
+        is_config = self._is_configuration_question(prompt)
         is_disclosure = self._is_disclosing_information(prompt)
-        logger.debug(f"Context check - is_question: {is_question}, is_disclosure: {is_disclosure}")
+        logger.debug(f"Context check - is_question: {is_question}, is_config: {is_config}, is_disclosure: {is_disclosure}")
         
         # PHASE A: Check specialized models first (higher accuracy, with context awareness)
         logger.debug("Checking specialized security models")
@@ -293,9 +295,10 @@ class ZeroShotSecurityValidator:
         # 1. Check for injection with specialized model (CONTEXT-AWARE)
         is_injection, injection_score, injection_patterns = self._check_specialized_injection(prompt)
         if is_injection:
-            # Apply context-awareness: Skip blocking for educational questions
-            if is_question and not is_disclosure:
-                logger.debug(f"Specialized injection model detected question (allowed): score={injection_score:.2f}")
+            # Apply context-awareness: Skip blocking for educational/config questions
+            # Phase 2.2: Include configuration context
+            if (is_question or is_config) and not is_disclosure:
+                logger.debug(f"Specialized injection model detected question/config (allowed): score={injection_score:.2f}")
                 warnings.append(f"Question about injection/security detected (allowed, confidence: {injection_score:.2f})")
                 classifications['specialized_injection'] = {
                     'detected': True,
@@ -322,8 +325,8 @@ class ZeroShotSecurityValidator:
         # 2. Check for PII with specialized model (CONTEXT-AWARE)
         sanitized_by_pii, pii_entities, pii_patterns = self._check_specialized_pii(modified_prompt)
         if pii_entities:
-            # Apply context-awareness: Skip blocking for educational questions
-            if is_question and not is_disclosure:
+            # Apply context-awareness: Skip blocking for educational/config questions
+            if (is_question or is_config) and not is_disclosure:
                 logger.debug(f"Specialized PII model detected question (allowed)")
                 warnings.append(f"Question about PII/credentials detected (allowed)")
                 classifications['specialized_pii'] = {
@@ -348,12 +351,14 @@ class ZeroShotSecurityValidator:
                 }
                 logger.info(f"PII masked by specialized model: {len(pii_entities)} entities")
         
-        # 3. PHASE B.1: Check for malicious code with specialized model (CONTEXT-AWARE)
+        # 3. PHASE B.1: Check for malicious code with specialized model (ENHANCED CONTEXT-AWARE)
         is_malicious, malicious_score, malicious_patterns = self._check_specialized_malicious(prompt)
         if is_malicious:
-            # Apply context-awareness: Skip blocking for educational questions
-            if is_question and not is_disclosure:
-                logger.debug(f"Specialized malicious model detected question (allowed): score={malicious_score:.2f}")
+            # Apply enhanced context-awareness:
+            # Skip blocking ONLY if it's an educational question that's NOT a code generation request
+            is_code_gen_request = self._is_code_generation_request(prompt)
+            if is_question and not is_disclosure and not is_code_gen_request:
+                logger.debug(f"Specialized malicious model detected educational question (allowed): score={malicious_score:.2f}")
                 warnings.append(f"Question about malicious code detected (allowed, confidence: {malicious_score:.2f})")
                 classifications['specialized_malicious'] = {
                     'detected': True,
@@ -362,7 +367,9 @@ class ZeroShotSecurityValidator:
                     'allowed_as_question': True
                 }
             else:
-                # Actual threat - block and sanitize
+                # Actual threat or code generation request - block and sanitize
+                if is_code_gen_request:
+                    logger.info(f"Code generation request for malicious code detected (blocking): score={malicious_score:.2f}")
                 blocked_patterns.extend(malicious_patterns)
                 warnings.append(f"Malicious code detected by specialized model (confidence: {malicious_score:.2f})")
                 classifications['specialized_malicious'] = {
@@ -470,11 +477,11 @@ class ZeroShotSecurityValidator:
                 label = top_result.get('label', '').upper()
                 score = top_result.get('score', 0.0)
                 
-                # Check if it's classified as injection
-                is_injection = 'INJECTION' in label or score > 0.7
+                # Check if it's classified as injection (must be INJECTION label AND high confidence)
+                is_injection = (label == 'INJECTION') and (score > 0.7)
                 
-                if is_injection:
-                    logger.info(f"Specialized injection detector: {label} (confidence: {score:.2f})")
+                # Log all detections for debugging
+                logger.info(f"Specialized injection detector: {label} (confidence: {score:.2f})")
                 
                 return is_injection, score, ["prompt_injection"] if is_injection else []
         except Exception as e:
@@ -483,7 +490,13 @@ class ZeroShotSecurityValidator:
         return False, 0.0, []
     
     def _check_specialized_pii(self, prompt: str) -> Tuple[str, List[Dict], List[str]]:
-        """Check for PII using specialized BERT NER model and mask detected entities"""
+        """Check for PII using specialized BERT NER model and mask detected entities
+        
+        Phase 1 improvements:
+        - Lower threshold from 0.7 to 0.6 for better detection
+        - Adaptive threshold based on entity count
+        - PII disclosure context detection
+        """
         if not self.pii_detector:
             return prompt, [], []
         
@@ -494,6 +507,20 @@ class ZeroShotSecurityValidator:
             blocked_types = []
             sanitized_prompt = prompt
             
+            # Phase 1.2: Adaptive threshold based on entity count
+            # If multiple PII entities detected, lower threshold
+            if len(entities) >= 2:
+                confidence_threshold = 0.5  # Multiple PII detected - more aggressive
+                logger.debug(f"Multiple PII entities detected ({len(entities)}), using threshold 0.5")
+            else:
+                confidence_threshold = 0.6  # Phase 1.1: Lowered from 0.7 to 0.6
+            
+            # Phase 1.3: Check for PII disclosure context (boosts confidence)
+            has_disclosure_context = self._is_disclosing_pii(prompt)
+            if has_disclosure_context:
+                confidence_threshold = 0.5  # Lower threshold when explicit disclosure detected
+                logger.debug("PII disclosure context detected, using threshold 0.5")
+            
             # Collect entities that meet confidence threshold
             entities_to_mask = []
             for entity in entities:
@@ -503,7 +530,7 @@ class ZeroShotSecurityValidator:
                 start = entity.get('start', 0)
                 end = entity.get('end', 0)
                 
-                if score > 0.8:  # High confidence PII
+                if score > confidence_threshold:
                     pii_found.append({
                         'type': entity_group,
                         'score': score,
@@ -513,7 +540,7 @@ class ZeroShotSecurityValidator:
                     })
                     blocked_types.append(f"pii_{entity_group}")
                     entities_to_mask.append(entity)
-                    logger.info(f"PII detected: {entity_group} (confidence: {score:.2f})")
+                    logger.info(f"PII detected: {entity_group} (confidence: {score:.2f}, threshold: {confidence_threshold})")
             
             # Mask entities from end to beginning to preserve character positions
             if entities_to_mask:
@@ -684,13 +711,25 @@ class ZeroShotSecurityValidator:
         return is_jailbreak, confidence, threat_patterns
     
     def _is_asking_question(self, text: str) -> bool:
-        """Detect if text is asking a question rather than disclosing information"""
+        """Detect if text is asking a question rather than disclosing information
+        
+        Phase 2.1: Expanded to include development tool configuration contexts
+        """
         question_indicators = [
             r'(?i)^(how|what|why|when|where|which|who|can|could|should|would|is|are|does)\b',
             r'(?i)\b(how\s+do\s+I|how\s+to|how\s+can|what\'?s\s+the\s+best|what\s+is)',
             r'(?i)\b(explain|describe|tell\s+me\s+about|help\s+me\s+understand)',
             r'(?i)\b(best\s+practice|recommended\s+way|proper\s+method)',
             r'(?i)\b(should\s+I|can\s+I|is\s+it\s+safe|is\s+it\s+okay)',
+            
+            # Phase 2.1: Development tool configuration contexts
+            r'(?i)\b(compile|transpile|build)\s+(the\s+)?(code|project|application)',
+            r'(?i)\b(typescript|eslint|prettier|webpack|babel)\s+(error|warning|config)',
+            r'(?i)\b(api\s+versioning|backward\s+compatibility)',
+            r'(?i)\b(email\s+verification|user\s+registration)',
+            r'(?i)\b(linting|formatting)\s+rule',
+            r'(?i)\b(allow|enable)\s+(any|all|console\.log)',
+            
             r'\?',  # Contains question mark
         ]
         
@@ -711,6 +750,99 @@ class ZeroShotSecurityValidator:
         for pattern in disclosure_indicators:
             if re.search(pattern, text):
                 return True
+        return False
+    
+    def _is_disclosing_pii(self, text: str) -> bool:
+        """Detect if text is explicitly sharing PII (Phase 1.3)
+        
+        Detects disclosure contexts like:
+        - "My SSN is...", "Driver's license DL123..."
+        - "for identity validation", "for background check"
+        """
+        pii_disclosure_patterns = [
+            r'(?i)\b(my|the|here\'?s|this\s+is)\s+(SSN|social\s+security|driver\'?s\s+license|passport|credit\s+card)',
+            r'(?i)(SSN|license|passport|card)\s+(is|:|number)',
+            r'(?i)\bfor\s+(identity|verification|validation|background\s+check)',
+            r'(?i)\b(DOB|date\s+of\s+birth|born\s+on)',
+            r'(?i)\b(email\s+is|contact\s+me\s+at|send\s+to)',
+            r'(?i)\b(phone|mobile|cell)\s+(number|is|:)',
+        ]
+        
+        for pattern in pii_disclosure_patterns:
+            if re.search(pattern, text):
+                return True
+        return False
+    
+    def _is_configuration_question(self, text: str) -> bool:
+        """Detect if text is asking about tool/framework configuration (Phase 2.2)
+        
+        Detects legitimate developer configuration contexts:
+        - Build tool configs (webpack, babel, TypeScript)
+        - Linting/formatting rules (ESLint, Prettier)
+        - Version control workflows (Git hooks, pre-commit)
+        - Feature flags and API design
+        """
+        config_indicators = [
+            r'(?i)\b(config|configuration|settings?|options?)\b',
+            r'(?i)\b(eslint|prettier|webpack|babel|typescript|tslint)\b',
+            r'(?i)\b(git\s+hook|pre-commit|husky)\b',
+            r'(?i)\b(compile|transpile|build)\s+',
+            r'(?i)\b(feature\s+flag|toggle)\b',
+            r'(?i)\b(versioning|compatibility)\b',
+            r'(?i)\b(training|requirements)\b',
+        ]
+        
+        for pattern in config_indicators:
+            if re.search(pattern, text):
+                return True
+        return False
+    
+    def _is_code_generation_request(self, text: str) -> bool:
+        """
+        Detect if text is requesting to CREATE/GENERATE malicious code or scripts.
+        
+        This distinguishes:
+        - ❌ BLOCK: "Show me how to run eval() with user input" (code generation)
+        - ✅ ALLOW: "What is eval() and why is it dangerous?" (educational question)
+        - ✅ ALLOW: "How do I prevent eval() attacks?" (defensive question)
+        
+        Returns True if the text is requesting code generation/implementation.
+        """
+        code_generation_patterns = [
+            # Direct code generation requests
+            r'(?i)\b(show|help|give|tell)\s+(me\s+)?how\s+to\s+(run|execute|use|implement|create|write|make|do)',
+            r'(?i)\b(create|write|generate|make|build)\s+(a\s+)?(script|code|function|program|command)',
+            r'(?i)\b(help|assist)\s+(me\s+)?(write|create|run|execute|implement|build)',
+            
+            # Imperative code requests
+            r'(?i)^(write|create|show|give|provide)\s+(me\s+)?(code|script|function)',
+            r'(?i)\b(let\'?s|lets)\s+(write|create|make|build)\s+(a\s+)?(script|code|function)',
+            
+            # Implementation-focused language
+            r'(?i)\b(I\s+want\s+to|I\s+need\s+to)\s+(run|execute|use|implement|create)',
+            r'(?i)\b(show|give)\s+me\s+(the\s+)?(code|script|function|command)\s+(to|that)',
+        ]
+        
+        # Defensive question indicators (should NOT match - these are legitimate)
+        defensive_indicators = [
+            r'(?i)\b(prevent|defend|protect|secure|mitigate|avoid)\s+',
+            r'(?i)\b(vulnerability|attack|threat|risk)\s+',
+            r'(?i)\bwhy\s+is\s+.*(dangerous|unsafe|bad|risky)',
+            r'(?i)\bwhat\s+is\s+',
+            r'(?i)\bwhat\s+are\s+',
+            r'(?i)\bexplain\s+',
+        ]
+        
+        # First check if it's a defensive/educational question - if so, NOT a code generation request
+        for pattern in defensive_indicators:
+            if re.search(pattern, text):
+                return False
+        
+        # Check for code generation patterns
+        for pattern in code_generation_patterns:
+            if re.search(pattern, text):
+                return True
+        
         return False
     
     def _detect_spacy_patterns(self, text: str) -> Dict[str, List[str]]:
@@ -839,17 +971,18 @@ class ZeroShotSecurityValidator:
         
         # CHECK CONTEXT FIRST - Add context-awareness to pattern detection
         is_question = self._is_asking_question(prompt)
+        is_config = self._is_configuration_question(prompt)
         is_disclosure = self._is_disclosing_information(prompt)
         
         # Log context for debugging
-        logger.debug(f"Pattern detection context check - is_question: {is_question}, is_disclosure: {is_disclosure}")
+        logger.debug(f"Pattern detection context check - is_question: {is_question}, is_config: {is_config}, is_disclosure: {is_disclosure}")
         
         for i, (label, score) in enumerate(zip(main_classification['labels'], main_classification['scores'])):
             if score > self.detection_threshold and label != "normal safe content":
                 
                 if any(keyword in label.lower() for keyword in ['password', 'secret', 'credential', 'api key', 'token', 'personal']):
                     # Apply context-awareness: Skip sanitization for educational questions
-                    if is_question and not is_disclosure:
+                    if (is_question or is_config) and not is_disclosure:
                         logger.debug(f"Skipping credential sanitization - educational question detected")
                     else:
                         credential_sanitization_applied = True
@@ -866,10 +999,17 @@ class ZeroShotSecurityValidator:
                                 pattern_blocked_patterns.append('credentials')
                 
                 elif "malicious code" in label.lower() or "system commands" in label.lower():
-                    # Apply context-awareness: Skip sanitization for educational questions
-                    if is_question and not is_disclosure:
-                        logger.debug(f"Skipping malicious sanitization - educational question detected")
+                    # Apply enhanced context-awareness:
+                    # Skip sanitization ONLY if:
+                    # 1. It's a question (not imperative)
+                    # 2. NOT asking to create/implement malicious code
+                    # 3. NOT disclosing sensitive info
+                    is_code_gen_request = self._is_code_generation_request(modified_prompt)
+                    if is_question and not is_disclosure and not is_code_gen_request:
+                        logger.debug(f"Skipping malicious sanitization - educational question detected (not code generation request)")
                     else:
+                        if is_code_gen_request:
+                            logger.info(f"Code generation request detected - applying malicious sanitization")
                         malicious_sanitization_applied = True
                         modified_prompt, masked = self._sanitize_malicious_content(modified_prompt)
                         if masked:
@@ -878,7 +1018,7 @@ class ZeroShotSecurityValidator:
                 
                 elif "injection" in label.lower() or "instruction manipulation" in label.lower():
                     # Apply context-awareness: Skip sanitization for educational questions
-                    if is_question and not is_disclosure:
+                    if (is_question or is_config) and not is_disclosure:
                         logger.debug(f"Skipping injection sanitization - educational question detected")
                     else:
                         injection_sanitization_applied = True
@@ -889,7 +1029,7 @@ class ZeroShotSecurityValidator:
                 
                 elif "jailbreak" in label.lower() or "role manipulation" in label.lower():
                     # Apply context-awareness: Skip sanitization for educational questions
-                    if is_question and not is_disclosure:
+                    if (is_question or is_config) and not is_disclosure:
                         logger.debug(f"Skipping jailbreak sanitization - educational question detected")
                     else:
                         jailbreak_sanitization_applied = True
@@ -916,14 +1056,16 @@ class ZeroShotSecurityValidator:
                     if 'credentials' not in pattern_blocked_patterns:
                         pattern_blocked_patterns.append('credentials')
         
-        # FALLBACK: Always run pattern-based malicious content detection (respect context-awareness)
+        # FALLBACK: Always run pattern-based malicious content detection (respect enhanced context-awareness)
         # This catches short commands that zero-shot might miss
-        if not malicious_sanitization_applied and not (is_question and not is_disclosure):
+        # Skip ONLY if it's an educational question that's NOT a code generation request
+        is_code_gen_request = self._is_code_generation_request(modified_prompt)
+        if not malicious_sanitization_applied and not (is_question and not is_disclosure and not is_code_gen_request):
             modified_prompt, masked = self._sanitize_malicious_content(modified_prompt)
             if masked:
                 sanitization_applied.setdefault('malicious_removed', []).extend(masked)
                 pattern_blocked_patterns.append('malicious_code')
-                logger.info(f"Pattern-based detection caught {len(masked)} malicious patterns")
+                logger.info(f"Pattern-based detection caught {len(masked)} malicious patterns{' (code generation request)' if is_code_gen_request else ''}")
         
         # FALLBACK: Always run pattern-based injection detection (respect context-awareness)
         if not injection_sanitization_applied and not (is_question and not is_disclosure):
@@ -1167,25 +1309,46 @@ class ZeroShotSecurityValidator:
     def _sanitize_malicious_content(self, text: str) -> Tuple[str, List[str]]:
         """Sanitize malicious code and commands with expanded pattern detection"""
         malicious_patterns = [
-            # Destructive file operations
+            # Destructive file operations - EXACT COMMANDS
             r'(?i)\b(rm|del|delete|erase)\s+(-rf?|-r|-f|/[sq])\s*[/\\*~.]',
             r'(?i)\b(format|wipe|destroy|shred)\s+(c:|d:|drive|disk|all|everything)',
             r'(?i)\bdd\s+if=/dev/(zero|random|urandom)',
             
-            # Database destruction
+            # Destructive file operations - GENERIC LANGUAGE (NEW)
+            r'(?i)\b(delete|remove|erase|wipe|destroy|clear)\s+(all|every|entire|the)\s+(file|data|record|content|directory)',
+            r'(?i)\b(delete|remove)\s+.*\b(recursive|recursively)',
+            r'(?i)\broot\s+directory\b.*\b(delete|remove|recursive)',
+            
+            # Database destruction - EXACT COMMANDS
             r'(?i)\b(DROP|TRUNCATE)\s+(DATABASE|TABLE|SCHEMA)',
             r'(?i)\bDELETE\s+FROM\s+\w+\s+(WHERE\s+1\s*=\s*1)?',
+            r'(?i)\bALTER\s+USER\s+\w+\s+WITH\s+PASSWORD',
+            r'(?i)\bUPDATE\s+\w+\s+SET\s+.*\s+WHERE\s+1\s*=\s*1',
+            r'(?i)\bUPDATE\s+\w+\s+SET\s+\w+\s*=\s*0',
             
-            # System commands
+            # Database destruction - GENERIC LANGUAGE (NEW)
+            r'(?i)\b(delete|drop|remove|destroy|truncate)\s+.*\b(database|table|schema|collection)',
+            r'(?i)\b(flush|clear|empty)\s+.*\b(database|table)',
+            
+            # System commands - EXACT COMMANDS
             r'(?i)\b(shutdown|reboot|halt|poweroff)\s+(-[fhr]|now|/[rsf])',
             r'(?i)\binit\s+[06]',
             r'(?i)\b(kill|killall|pkill)\s+(-9|-KILL)\s',
             
-            # Code execution patterns
+            # System commands - GENERIC LANGUAGE (NEW)
+            r'(?i)\b(shutdown|halt|restart|reboot)\s+(the\s+)?(system|server|computer|machine)',
+            r'(?i)\b(flush|clear|drop)\s+.*\b(firewall|iptables)',
+            
+            # Code execution patterns - EXACT COMMANDS
             r'(?i)\b(eval|exec|system|shell_exec|passthru)\s*\(',
             r'(?i)\bRuntime\.getRuntime\(\)\.exec\s*\(',
             r'(?i)\bProcess\.(Start|spawn)\s*\(',
             r'(?i)\bSubprocess\.(call|run|Popen)\s*\(',
+            
+            # Code execution patterns - WITH USER INPUT (NEW)
+            r'(?i)\b(eval|exec|system)\s*\(.*\buser\s+(input|data|provided)',
+            r'(?i)\buser\s+(input|data).*\b(eval|exec|system)\s*\(',
+            r'(?i)\b(run|execute)\s+(eval|exec|system)\s+with',
             
             # Shell command injection
             r'(?i)(execute|run|system)\s+(rm|del|delete|format|destroy|wipe|drop)',
@@ -1300,10 +1463,28 @@ class ZeroShotSecurityValidator:
             r'(?i)\b(hypothetically|theoretically|imagine|suppose|what\s+if|lets\s+say|lets\s+pretend)\s+',
             r'(?i)\bin\s+a\s+(hypothetical|theoretical)\s+(scenario|situation|world)',
             
-            # False authority
+            # False authority - EXISTING
             r'(?i)\b(as\s+)?(admin|administrator|root|superuser|cto|ceo|manager|owner|developer|engineer)\s+(said|told\s+me|authorized|approved)',
             r'(?i)\bI\s+(am|have)\s+(authorized|permission|clearance|rights|access)\s+(to|for)',
             r'(?i)\bI\s+have\s+been\s+(granted|given)\s+(access|permission|authorization)',
+            
+            # False authority - ROLE CLAIMS (NEW)
+            r'(?i)\bI\'?m\s+(the\s+)?(admin|administrator|root|superuser|system\s+administrator|sysadmin|owner|manager)',
+            r'(?i)\bI\s+am\s+(the\s+)?(admin|administrator|root|superuser|system\s+administrator|owner)',
+            r'(?i)\b(as\s+)?(admin|administrator|root|superuser|sysadmin)\s+(I\s+)?(can|have|require|need)',
+            
+            # Clearance level claims (NEW)
+            r'(?i)\bI\s+have\s+clearance\s+level\s+\d+',
+            r'(?i)\bclearance\s+level\s+\d+\s+(display|show|reveal|access)',
+            
+            # Console/system activation (NEW)
+            r'(?i)\b(activate|enable|open)\s+(admin|system|debug|root)\s+(console|mode|access|panel)',
+            r'(?i)\b(activate|enable).*\bfull\s+(system\s+)?access',
+            
+            # Override and "show me" commands (NEW)
+            r'(?i)\boverride\s+(and\s+)?(show|tell|give|reveal|display)',
+            r'(?i)\b(show|tell|give)\s+me\s+(the\s+)?(password|credentials|secret|access|admin)',
+            r'(?i)\b(system|admin)\s+override\s+(show|tell|give)',
             
             # Urgency/emergency
             r'(?i)\b(urgent|emergency|critical|immediately|asap|right\s+now)',
@@ -1324,6 +1505,10 @@ class ZeroShotSecurityValidator:
             r'(?i)\b(bypass|override|ignore|disable|turn\s+off|deactivate)\s+(safety|security|guidelines|filters|restrictions|rules)',
             r'(?i)\bwithout\s+(safety|security|ethical)\s+(restrictions|guidelines|considerations)',
             r'(?i)\b(forget|ignore)\s+your\s+(ethics|safety|security)',
+            
+            # Permission/bypass claims (NEW)
+            r'(?i)\b(I\s+)?(can|could|may|should\s+be\s+able\s+to)\s+bypass',
+            r'(?i)\byou\s+can\s+(show|tell|give)\s+me\s+(how\s+to\s+)?bypass',
             
             # Manipulation tactics
             r'(?i)\beveryone\s+else\s+(does|said|agrees)',
@@ -1364,6 +1549,7 @@ class ZeroShotSecurityValidator:
         # Check context to reduce false positives
         prompt_text = main_classification.get('sequence', '')
         is_question = self._is_asking_question(prompt_text)
+        is_config = self._is_configuration_question(prompt_text)
         is_disclosure = self._is_disclosing_information(prompt_text)
         
         for label, score in zip(main_classification['labels'], main_classification['scores']):
@@ -1374,7 +1560,7 @@ class ZeroShotSecurityValidator:
                     # High confidence threats - BLOCK (with context awareness)
                     if "password" in label.lower() or "secret" in label.lower() or "credential" in label.lower():
                         # Allow questions ABOUT security, block actual disclosures
-                        if is_question and not is_disclosure:
+                        if (is_question or is_config) and not is_disclosure:
                             warnings.append(f"[{self.security_level.value.upper()}] Question about credentials detected (allowed): {label} (confidence: {score:.2f})")
                         else:
                             blocked_patterns.append("credential_exposure")
@@ -1382,7 +1568,7 @@ class ZeroShotSecurityValidator:
                     
                     elif "malicious" in label.lower() or "system commands" in label.lower():
                         # Apply context-aware detection (like credentials)
-                        if is_question and not is_disclosure:
+                        if (is_question or is_config) and not is_disclosure:
                             warnings.append(f"[{self.security_level.value.upper()}] Question about malicious code detected (allowed): {label} (confidence: {score:.2f})")
                         else:
                             blocked_patterns.append("malicious_code")
@@ -1390,7 +1576,7 @@ class ZeroShotSecurityValidator:
                     
                     elif "injection" in label.lower() or "manipulation" in label.lower() or "instruction" in label.lower():
                         # Apply context-aware detection (like credentials)
-                        if is_question and not is_disclosure:
+                        if (is_question or is_config) and not is_disclosure:
                             warnings.append(f"[{self.security_level.value.upper()}] Question about injection/security detected (allowed): {label} (confidence: {score:.2f})")
                         else:
                             blocked_patterns.append("prompt_injection")
@@ -1398,7 +1584,7 @@ class ZeroShotSecurityValidator:
                     
                     elif "jailbreak" in label.lower() or "role manipulation" in label.lower():
                         # Apply context-aware detection (like credentials)
-                        if is_question and not is_disclosure:
+                        if (is_question or is_config) and not is_disclosure:
                             warnings.append(f"[{self.security_level.value.upper()}] Question about jailbreak/security detected (allowed): {label} (confidence: {score:.2f})")
                         else:
                             # Block jailbreak at ALL security levels when threshold exceeded
